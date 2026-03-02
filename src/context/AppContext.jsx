@@ -155,6 +155,72 @@ export function AppProvider({ children }) {
 
   const isDark = theme === 'dark'
 
+  // ── refreshTransactions ──────────────────────────────────────────────────────
+  // Re-fetches all transactions from Supabase and replaces local state.
+  // Called by the Dashboard on mount to guarantee fresh data.
+
+  const refreshTransactions = useCallback(async () => {
+    if (!user) return
+    const { data: txRows, error } = await supabase
+      .from('transactions')
+      .select('*, transaction_splits(*)')
+      .eq('user_id', user.id)
+      .order('date', { ascending: false })
+    if (!error && txRows) {
+      setTransactions(txRows.map(dbToTransaction))
+    }
+  }, [user?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Real-time subscription ────────────────────────────────────────────────────
+  // Listen for INSERT / UPDATE / DELETE on `transactions` so all open pages
+  // (Dashboard, Transactions, Analytics, Calendar) stay in sync automatically.
+
+  useEffect(() => {
+    if (!user) return
+
+    const channel = supabase
+      .channel(`transactions:${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'transactions' },
+        async (payload) => {
+          const { eventType, new: newRow, old: oldRow } = payload
+
+          if (eventType === 'DELETE') {
+            setTransactions(prev => prev.filter(t => t.id !== oldRow.id))
+            return
+          }
+
+          // INSERT or UPDATE: re-fetch the full row (with splits) from DB
+          const { data } = await supabase
+            .from('transactions')
+            .select('*, transaction_splits(*)')
+            .eq('id', newRow.id)
+            .single()
+
+          if (!data || data.user_id !== user.id) return
+          const txn = dbToTransaction(data)
+
+          if (eventType === 'INSERT') {
+            // Deduplicate: our own mutations already update local state optimistically
+            setTransactions(prev =>
+              prev.some(t => t.id === txn.id) ? prev : [txn, ...prev]
+            )
+          } else {
+            // UPDATE: overwrite with authoritative server data
+            setTransactions(prev =>
+              prev.some(t => t.id === txn.id)
+                ? prev.map(t => t.id === txn.id ? txn : t)
+                : prev
+            )
+          }
+        }
+      )
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [user?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Refs so callbacks can read latest state without stale closures
   const transactionsRef = useRef(transactions)
   useEffect(() => { transactionsRef.current = transactions }, [transactions])
@@ -1020,6 +1086,7 @@ export function AppProvider({ children }) {
     addPaycheckPlan,
     updatePaycheckPlan,
     deletePaycheckPlan,
+    refreshTransactions,
     addTransaction,
     updateTransaction,
     deleteTransaction,
@@ -1052,6 +1119,7 @@ export function AppProvider({ children }) {
     theme, setTheme, isDark,
     recurringRules, paycheckPlans, currentMonthPaycheckPlans,
     addPaycheckPlan, updatePaycheckPlan, deletePaycheckPlan,
+    refreshTransactions,
     addTransaction, updateTransaction, deleteTransaction, confirmTransaction,
     addRecurringRule, updateRecurringRule, pauseRecurringRule, deleteRecurringRule, generateRecurringInstances,
     setBudgetAmount, getMonthBudget,

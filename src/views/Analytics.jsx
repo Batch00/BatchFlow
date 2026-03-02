@@ -494,8 +494,18 @@ function TrendsView({ categories, transactions, budgets, isDark }) {
 // ── Analytics (main view) ─────────────────────────────────────────────────────
 
 export default function Analytics() {
-  const { categories, transactions, budgets, currentMonth, currentMonthTransactions, currentMonthBudget, isDark } = useApp()
+  const { categories, transactions, budgets, currentMonthTransactions, currentMonthBudget, isDark } = useApp()
   const [tab, setTab] = useState('month')
+
+  // Exclude pending transactions from all analytics — only confirmed data counts
+  const confirmedMonthTransactions = useMemo(
+    () => currentMonthTransactions.filter(t => !t.isPending),
+    [currentMonthTransactions]
+  )
+  const confirmedAllTransactions = useMemo(
+    () => transactions.filter(t => !t.isPending),
+    [transactions]
+  )
 
   return (
     <div className="space-y-5 max-w-4xl">
@@ -508,14 +518,14 @@ export default function Analytics() {
       {tab === 'month' ? (
         <MonthView
           categories={categories}
-          transactions={currentMonthTransactions}
+          transactions={confirmedMonthTransactions}
           budget={currentMonthBudget}
           isDark={isDark}
         />
       ) : (
         <TrendsView
           categories={categories}
-          transactions={transactions}
+          transactions={confirmedAllTransactions}
           budgets={budgets}
           isDark={isDark}
         />

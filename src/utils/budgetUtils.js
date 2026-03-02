@@ -69,8 +69,9 @@ export function getProgressStatus(spent, planned, type = 'expense') {
     if (pct >= 50) return 'warning'
     return 'none'
   }
-  // expense: red only when spending has exceeded the budgeted amount
-  if (pct > 100) return 'over'
+  // expense: red only when spending has strictly exceeded the budgeted amount.
+  // Guard against floating-point drift: only flag over if more than 1 cent over.
+  if (spent - planned > 0.01) return 'over'
   if (pct >= 50) return 'warning'
   return 'good'
 }

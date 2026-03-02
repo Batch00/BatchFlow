@@ -21,6 +21,8 @@ export default function ProgressBar({ spent, planned, type = 'expense', pending 
     : 0
 
   const remaining = (planned ?? 0) - (spent ?? 0)
+  // Use a small epsilon so floating-point drift never shows red at exactly $0.00
+  const isOver = remaining < -0.01
   const isIncome = type === 'income'
 
   return (
@@ -51,10 +53,10 @@ export default function ProgressBar({ spent, planned, type = 'expense', pending 
               <> · <span className="text-amber-500 dark:text-amber-400">{formatCurrency(pending)} pending</span></>
             )}
           </span>
-          <span className={remaining < 0 ? 'text-red-500 font-medium' : ''}>
-            {remaining < 0
+          <span className={isOver ? 'text-red-500 font-medium' : ''}>
+            {isOver
               ? `${formatCurrency(Math.abs(remaining))} over`
-              : `${formatCurrency(remaining)} left`}
+              : `${formatCurrency(Math.max(0, remaining))} left`}
           </span>
         </div>
       )}

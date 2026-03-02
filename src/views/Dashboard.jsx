@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ChevronDown, ChevronRight, TrendingUp, TrendingDown, Wallet, Target, Plus, Clock, CheckCircle2 } from 'lucide-react'
 
@@ -126,10 +126,17 @@ export default function Dashboard() {
     currentMonthBudget,
     budgets,
     copyBudget,
+    refreshTransactions,
   } = useApp()
 
   const navigate = useNavigate()
   const [modalOpen, setModalOpen] = useState(false)
+
+  // Force a fresh fetch from Supabase every time the dashboard is visited
+  // so recent activity always reflects the true current state of the database.
+  useEffect(() => {
+    refreshTransactions()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const tomorrowStr = useMemo(() => getTomorrowStr(), [])
 
