@@ -117,7 +117,10 @@ export function AppProvider({ children }) {
   const [loading, setLoading] = useState(true)
 
   // ── Theme ─────────────────────────────────────────────────────────────────────
-  const [theme, setThemeState] = useState(() => loadData('theme', 'system'))
+  const [theme, setThemeState] = useState(() => {
+    const t = loadData('theme', 'dark')
+    return t === 'system' ? 'dark' : t
+  })
 
   const setTheme = useCallback((newTheme) => {
     setThemeState(newTheme)
@@ -128,52 +131,29 @@ export function AppProvider({ children }) {
   // Apply/remove .dark class on <html> and update PWA theme-color meta tags
   useEffect(() => {
     const root = document.documentElement
+    const dark = theme === 'dark'
+    if (dark) {
+      root.classList.add('dark')
+    } else {
+      root.classList.remove('dark')
+    }
     const lightMeta = document.querySelector('meta[name="theme-color"][media="(prefers-color-scheme: light)"]')
     const darkMeta = document.querySelector('meta[name="theme-color"][media="(prefers-color-scheme: dark)"]')
-
-    const applyDark = (dark) => {
-      if (dark) {
-        root.classList.add('dark')
-      } else {
-        root.classList.remove('dark')
-      }
-      if (lightMeta) lightMeta.content = dark ? '#0f172a' : '#4f46e5'
-      if (darkMeta) darkMeta.content = dark ? '#0f172a' : '#4f46e5'
-    }
-
-    if (theme === 'dark') {
-      applyDark(true)
-      return
-    }
-    if (theme === 'light') {
-      applyDark(false)
-      return
-    }
-    // system
-    const mq = window.matchMedia('(prefers-color-scheme: dark)')
-    applyDark(mq.matches)
-    // Reset meta tags to media-based behavior for system mode
-    if (lightMeta) lightMeta.content = '#4f46e5'
-    if (darkMeta) darkMeta.content = '#0f172a'
-    const onChange = (e) => applyDark(e.matches)
-    mq.addEventListener('change', onChange)
-    return () => mq.removeEventListener('change', onChange)
+    if (lightMeta) lightMeta.content = dark ? '#0f172a' : '#4f46e5'
+    if (darkMeta) darkMeta.content = dark ? '#0f172a' : '#4f46e5'
   }, [theme])
 
   // Sync theme from Supabase user metadata on login
   useEffect(() => {
     if (!user) return
     const remoteTheme = user.user_metadata?.theme
-    if (remoteTheme && remoteTheme !== loadData('theme', 'system')) {
-      setTheme(remoteTheme)
+    if (remoteTheme && remoteTheme !== 'system') {
+      const local = loadData('theme', 'dark')
+      if (remoteTheme !== local) setTheme(remoteTheme)
     }
   }, [user?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const isDark = (() => {
-    if (theme === 'dark') return true
-    if (theme === 'light') return false
-    return window.matchMedia('(prefers-color-scheme: dark)').matches
-  })()
+  const isDark = theme === 'dark'
 
   // Refs so callbacks can read latest state without stale closures
   const transactionsRef = useRef(transactions)
@@ -351,8 +331,8 @@ export function AppProvider({ children }) {
         ? await seedDefaults()
         : catRows.map(row => dbToCategory(row, subRows ?? []))
 
-      // New accounts get light mode by default; existing accounts keep their stored preference
-      if (isNewAccount) setTheme('light')
+      // New accounts get dark mode by default; existing accounts keep their stored preference
+      if (isNewAccount) setTheme('dark')
 
       const mappedTxns = (txRows ?? []).map(dbToTransaction)
       const mappedRules = (ruleRows ?? []).map(dbToRecurringRule)

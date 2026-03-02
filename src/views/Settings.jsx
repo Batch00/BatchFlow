@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import {
   Download, Upload, AlertTriangle, Smartphone,
   Mail, Lock, Trash2, CheckCircle, Info,
-  Sun, Monitor, Moon,
+  Sun, Moon,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
@@ -333,7 +333,6 @@ export default function Settings() {
           <div className="flex gap-2">
             {[
               { value: 'light', label: 'Light', Icon: Sun },
-              { value: 'system', label: 'System', Icon: Monitor },
               { value: 'dark', label: 'Dark', Icon: Moon },
             ].map(({ value, label, Icon }) => (
               <button

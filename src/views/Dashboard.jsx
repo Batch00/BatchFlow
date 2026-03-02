@@ -1,6 +1,19 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronDown, ChevronRight, TrendingUp, TrendingDown, Wallet, Target, Plus, Clock } from 'lucide-react'
+import { ChevronDown, ChevronRight, TrendingUp, TrendingDown, Wallet, Target, Plus, Clock, CheckCircle2 } from 'lucide-react'
+
+// Pending recurring transactions are hidden until 1 day before their scheduled date
+function getTomorrowStr() {
+  const d = new Date()
+  d.setDate(d.getDate() + 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function isVisiblePending(t, tomorrowStr) {
+  if (!t.isPending || !t.recurringRuleId) return true
+  const scheduledDate = t.scheduledDate || t.date
+  return scheduledDate <= tomorrowStr
+}
 import { useApp } from '../context/AppContext'
 import { formatCurrency, formatDate, formatMonthLabel } from '../utils/formatters'
 import {
@@ -118,14 +131,17 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const [modalOpen, setModalOpen] = useState(false)
 
+  const tomorrowStr = useMemo(() => getTomorrowStr(), [])
+
   // Split into confirmed (historical) and pending (auto-generated, not yet paid)
+  // Pending recurring transactions hidden until 1 day before their scheduled date
   const confirmedTransactions = useMemo(
     () => currentMonthTransactions.filter(t => !t.isPending),
     [currentMonthTransactions]
   )
   const pendingTransactions = useMemo(
-    () => currentMonthTransactions.filter(t => t.isPending),
-    [currentMonthTransactions]
+    () => currentMonthTransactions.filter(t => t.isPending && isVisiblePending(t, tomorrowStr)),
+    [currentMonthTransactions, tomorrowStr]
   )
 
   // Empty-state detection — considers ALL transactions (pending counts as activity)
@@ -303,65 +319,76 @@ export default function Dashboard() {
             <p className="text-slate-400 dark:text-slate-500 text-sm">No transactions yet this month.</p>
           </div>
         ) : (
-          <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-700">
-            {/* Confirmed recent transactions */}
-            {recentConfirmed.map(t => {
-              const isIncome = t.type === 'income'
-              let label, color
-              if (t.splits) {
-                const firstCat = categories.find(c => c.id === t.splits[0].categoryId)
-                label = t.merchant || 'Split Transaction'
-                color = firstCat?.color ?? '#94a3b8'
-              } else {
-                const cat = categories.find(c => c.id === t.categoryId)
-                label = t.merchant || cat?.name || 'Unknown'
-                color = cat?.color ?? '#94a3b8'
-              }
-              return (
-                <div key={t.id} className="flex items-center gap-3 px-4 py-3">
-                  <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-slate-800 dark:text-slate-100 truncate">{label}</p>
-                    <p className="text-xs text-slate-400 dark:text-slate-500">{formatDate(t.date)}</p>
-                  </div>
-                  <span className={`text-sm font-semibold flex-shrink-0 tabular-nums ${isIncome ? 'text-emerald-600' : 'text-slate-800 dark:text-slate-100'}`}>
-                    {isIncome ? '+' : '−'}{formatCurrency(t.amount)}
-                  </span>
-                </div>
-              )
-            })}
-
-            {/* Pending recurring transactions — shown as a distinct sub-section */}
+          <div className="space-y-3">
+            {/* Pending section — shown first */}
             {upcomingPending.length > 0 && (
-              <>
-                <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 dark:bg-amber-900/10">
+              <div>
+                <div className="flex items-center gap-2 mb-2">
                   <Clock size={11} className="text-amber-500 dark:text-amber-400 flex-shrink-0" />
-                  <span className="text-xs font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wider">
+                  <span className="text-xs font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wider">
                     Pending
                   </span>
-                  <span className="text-xs text-amber-600 dark:text-amber-500">
-                    {upcomingPending.length} recurring transaction{upcomingPending.length !== 1 ? 's' : ''} not yet confirmed
+                </div>
+                <div className="bg-white dark:bg-slate-800 rounded-xl border border-amber-200 dark:border-amber-900/60 divide-y divide-slate-100 dark:divide-slate-700">
+                  {upcomingPending.map(t => {
+                    const isIncome = t.type === 'income'
+                    const cat = categories.find(c => c.id === t.categoryId)
+                    const label = t.merchant || cat?.name || 'Recurring'
+                    const color = cat?.color ?? '#94a3b8'
+                    return (
+                      <div key={t.id} className="flex items-center gap-3 px-4 py-3">
+                        <div className="w-2 h-2 rounded-full flex-shrink-0 opacity-60" style={{ backgroundColor: color }} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-slate-500 dark:text-slate-400 truncate italic">{label}</p>
+                          <p className="text-xs text-slate-400 dark:text-slate-500">{formatDate(t.date)}</p>
+                        </div>
+                        <span className={`text-sm font-medium flex-shrink-0 tabular-nums italic ${isIncome ? 'text-emerald-500 opacity-70' : 'text-slate-400 dark:text-slate-500'}`}>
+                          {isIncome ? '+' : '−'}{formatCurrency(t.amount)}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Completed section */}
+            {recentConfirmed.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <CheckCircle2 size={11} className="text-slate-400 dark:text-slate-500 flex-shrink-0" />
+                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                    Completed
                   </span>
                 </div>
-                {upcomingPending.map(t => {
-                  const isIncome = t.type === 'income'
-                  const cat = categories.find(c => c.id === t.categoryId)
-                  const label = t.merchant || cat?.name || 'Recurring'
-                  const color = cat?.color ?? '#94a3b8'
-                  return (
-                    <div key={t.id} className="flex items-center gap-3 px-4 py-3 bg-amber-50/40 dark:bg-amber-900/5">
-                      <div className="w-2 h-2 rounded-full flex-shrink-0 opacity-60" style={{ backgroundColor: color }} />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm text-slate-500 dark:text-slate-400 truncate italic">{label}</p>
-                        <p className="text-xs text-slate-400 dark:text-slate-500">{formatDate(t.date)}</p>
+                <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-700">
+                  {recentConfirmed.map(t => {
+                    const isIncome = t.type === 'income'
+                    let label, color
+                    if (t.splits) {
+                      const firstCat = categories.find(c => c.id === t.splits[0].categoryId)
+                      label = t.merchant || 'Split Transaction'
+                      color = firstCat?.color ?? '#94a3b8'
+                    } else {
+                      const cat = categories.find(c => c.id === t.categoryId)
+                      label = t.merchant || cat?.name || 'Unknown'
+                      color = cat?.color ?? '#94a3b8'
+                    }
+                    return (
+                      <div key={t.id} className="flex items-center gap-3 px-4 py-3">
+                        <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-slate-800 dark:text-slate-100 truncate">{label}</p>
+                          <p className="text-xs text-slate-400 dark:text-slate-500">{formatDate(t.date)}</p>
+                        </div>
+                        <span className={`text-sm font-semibold flex-shrink-0 tabular-nums ${isIncome ? 'text-emerald-600' : 'text-slate-800 dark:text-slate-100'}`}>
+                          {isIncome ? '+' : '−'}{formatCurrency(t.amount)}
+                        </span>
                       </div>
-                      <span className={`text-sm font-medium flex-shrink-0 tabular-nums italic ${isIncome ? 'text-emerald-500 opacity-70' : 'text-slate-400 dark:text-slate-500'}`}>
-                        {isIncome ? '+' : '−'}{formatCurrency(t.amount)}
-                      </span>
-                    </div>
-                  )
-                })}
-              </>
+                    )
+                  })}
+                </div>
+              </div>
             )}
           </div>
         )}

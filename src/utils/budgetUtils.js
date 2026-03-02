@@ -59,8 +59,8 @@ export function getProgressPercent(spent, planned) {
 
 // Returns 'good' | 'warning' | 'over' | 'none'
 // type: 'expense' (default) | 'income'
-// Expense: green < 50%, yellow 50–99%, red ≥ 100%
-// Income:  neutral < 50%, yellow 50–99%, green = 100% (goal reached)
+// Expense: green >50% remaining, yellow 0–50% remaining, red only when over budget (spent > planned)
+// Income:  neutral < 50% received, yellow 50–99%, green = 100% (goal reached)
 export function getProgressStatus(spent, planned, type = 'expense') {
   if (!planned) return 'none'
   const pct = (spent / planned) * 100
@@ -69,8 +69,8 @@ export function getProgressStatus(spent, planned, type = 'expense') {
     if (pct >= 50) return 'warning'
     return 'none'
   }
-  // expense
-  if (pct >= 100) return 'over'
+  // expense: red only when spending has exceeded the budgeted amount
+  if (pct > 100) return 'over'
   if (pct >= 50) return 'warning'
   return 'good'
 }

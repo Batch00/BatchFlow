@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { DollarSign, AlertTriangle, X, Pencil } from 'lucide-react'
+import { DollarSign, AlertTriangle, X, Pencil, RefreshCw } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { formatCurrency, formatDate, formatMonthLabel } from '../utils/formatters'
 import TransactionModal from '../components/transactions/TransactionModal'
@@ -118,18 +118,19 @@ export default function Calendar() {
 
   const catMap = useMemo(() => Object.fromEntries(categories.map(c => [c.id, c])), [categories])
 
-  // Recurring income transactions for this month — these are the auto-derived paychecks
-  const incomeRecurringTxns = useMemo(
+  // All income to display: recurring (pending or confirmed) + one-time confirmed
+  const incomeItems = useMemo(
     () => currentMonthTransactions
-      .filter(t => t.type === 'income' && t.recurringRuleId !== null)
+      .filter(t => t.type === 'income' && (t.recurringRuleId !== null || !t.isPending))
       .sort((a, b) => a.date.localeCompare(b.date)),
     [currentMonthTransactions]
   )
 
-  // Whether the user has any active recurring income rules set up
-  const hasIncomeRules = useMemo(
-    () => recurringRules.some(r => r.type === 'income' && !r.isPaused),
-    [recurringRules]
+  // Whether there is any income to show (recurring rules set up OR confirmed one-time income)
+  const hasAnyIncome = useMemo(
+    () => recurringRules.some(r => r.type === 'income' && !r.isPaused) ||
+          currentMonthTransactions.some(t => t.type === 'income' && !t.isPending && !t.recurringRuleId),
+    [recurringRules, currentMonthTransactions]
   )
 
   // Events indexed by day-of-month
@@ -154,7 +155,7 @@ export default function Calendar() {
     return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`
   })()
 
-  // Cash flow — income from recurring income transactions; expenses from recurring + confirmed
+  // Cash flow — all income (recurring + confirmed one-time); expenses from recurring + confirmed
   const cashFlow = useMemo(() => {
     const balance0 = parseFloat(startingBalance) || 0
     const rows = []
@@ -162,7 +163,7 @@ export default function Calendar() {
     for (let d = 1; d <= daysInMonth; d++) {
       const { transactions: txns = [] } = eventsByDay[d] ?? {}
       const income = txns
-        .filter(t => t.type === 'income' && t.recurringRuleId !== null)
+        .filter(t => t.type === 'income' && (t.recurringRuleId !== null || !t.isPending))
         .reduce((s, t) => s + t.amount, 0)
       const expenses = txns
         .filter(t => t.type === 'expense' && (t.recurringRuleId !== null || !t.isPending))
@@ -175,7 +176,7 @@ export default function Calendar() {
     return rows
   }, [eventsByDay, daysInMonth, startingBalance])
 
-  const paycheckTotal = incomeRecurringTxns.reduce((s, t) => s + t.amount, 0)
+  const incomeTotal = incomeItems.reduce((s, t) => s + t.amount, 0)
 
   const selectedDayStr = selectedDay != null
     ? `${currentMonth}-${String(selectedDay).padStart(2, '0')}`
@@ -272,39 +273,51 @@ export default function Calendar() {
         </div>
       </div>
 
-      {/* Paychecks — auto-derived from recurring income transactions */}
+      {/* Income — recurring + confirmed one-time */}
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-700">
-          <h2 className="font-semibold text-slate-900 dark:text-white">Paychecks</h2>
-          {paycheckTotal > 0 && (
+          <h2 className="font-semibold text-slate-900 dark:text-white">Income</h2>
+          {incomeTotal > 0 && (
             <span className="text-sm font-medium text-emerald-600 dark:text-emerald-400">
-              {formatCurrency(paycheckTotal)} total
+              {formatCurrency(incomeTotal)} total
             </span>
           )}
         </div>
-        {!hasIncomeRules ? (
+        {!hasAnyIncome ? (
           <div className="px-5 py-8 text-center space-y-1">
-            <p className="text-sm text-slate-500 dark:text-slate-400">No recurring income set up yet.</p>
+            <p className="text-sm text-slate-500 dark:text-slate-400">No income for this month yet.</p>
             <p className="text-sm text-slate-500 dark:text-slate-400">
-              Add recurring income transactions on the Recurring page and they will appear here automatically.
+              Add recurring income on the Recurring page or log a confirmed income transaction and it will appear here.
             </p>
           </div>
-        ) : incomeRecurringTxns.length === 0 ? (
+        ) : incomeItems.length === 0 ? (
           <div className="px-5 py-8 text-center">
-            <p className="text-sm text-slate-500 dark:text-slate-400">No recurring income scheduled for this month.</p>
+            <p className="text-sm text-slate-500 dark:text-slate-400">No income scheduled or confirmed for this month.</p>
           </div>
         ) : (
           <div className="divide-y divide-slate-100 dark:divide-slate-700/60">
-            {incomeRecurringTxns.map(t => (
+            {incomeItems.map(t => (
               <div key={t.id} className="flex items-center justify-between px-5 py-3">
                 <div className="flex items-center gap-3">
                   <div className="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center flex-shrink-0">
                     <DollarSign size={14} className="text-emerald-600 dark:text-emerald-400" />
                   </div>
                   <div>
-                    <p className="text-sm font-medium text-slate-900 dark:text-white">
-                      {t.merchant || catMap[t.categoryId]?.name || 'Income'}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium text-slate-900 dark:text-white">
+                        {t.merchant || catMap[t.categoryId]?.name || 'Income'}
+                      </p>
+                      {t.recurringRuleId ? (
+                        <span className="flex items-center gap-0.5 text-xs font-medium bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400 px-1.5 py-0.5 rounded-full">
+                          <RefreshCw size={9} />
+                          Recurring
+                        </span>
+                      ) : (
+                        <span className="text-xs font-medium bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 px-1.5 py-0.5 rounded-full">
+                          Income
+                        </span>
+                      )}
+                    </div>
                     <div className="flex items-center gap-1.5">
                       <p className="text-xs text-slate-500 dark:text-slate-400">{formatDate(t.date)}</p>
                       {t.isPending && (
@@ -338,7 +351,7 @@ export default function Calendar() {
         </div>
         {cashFlow.length === 0 ? (
           <p className="px-5 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
-            No recurring transactions or confirmed expenses this month yet.
+            No income or confirmed expenses this month yet.
           </p>
         ) : (
           <div className="overflow-x-auto">
