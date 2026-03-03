@@ -618,37 +618,23 @@ export function AppProvider({ children }) {
     const updatedRule = dbToRecurringRule(row)
     setRecurringRules(prev => prev.map(r => r.id === id ? updatedRule : r))
 
-    // Propagate field changes to all pending (unconfirmed) instances for this rule.
-    // Confirmed instances are historical records and should not be modified.
-    await supabase
-      .from('transactions')
-      .update({
-        amount: updates.amount,
-        type: updates.type,
-        merchant: updates.merchant || null,
-        notes: updates.notes || null,
-        category_id: updates.categoryId || null,
-        subcategory_id: updates.subcategoryId || null,
-      })
+    // Delete ALL pending instances for this rule. Patching fields in-place is not
+    // enough because schedule changes (start_date / frequency / end_date) would leave
+    // instances with stale scheduled_dates, causing duplicates the next time
+    // generateRecurringInstances runs. Deleting and regenerating is always correct.
+    await supabase.from('transactions')
+      .delete()
       .eq('recurring_rule_id', id)
       .eq('is_pending', true)
       .eq('user_id', user.id)
 
-    setTransactions(prev => prev.map(t => {
-      if (t.recurringRuleId !== id || !t.isPending) return t
-      return {
-        ...t,
-        amount: updates.amount,
-        type: updates.type,
-        merchant: updates.merchant || null,
-        notes: updates.notes || null,
-        categoryId: updates.categoryId || null,
-        subcategoryId: updates.subcategoryId || null,
-      }
-    }))
+    setTransactions(prev => prev.filter(t => !(t.recurringRuleId === id && t.isPending)))
+
+    // Regenerate fresh pending instances for the current month based on the updated rule.
+    await generateRecurringInstances(currentMonthRef.current)
 
     return updatedRule
-  }, [user])
+  }, [user, generateRecurringInstances])
 
   const pauseRecurringRule = useCallback(async (id, isPaused) => {
     const { error } = await supabase

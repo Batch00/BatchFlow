@@ -179,9 +179,10 @@ export default function Dashboard() {
   const incomeCategories  = categories.filter(c => c.type === 'income')
   const expenseCategories = categories.filter(c => c.type === 'expense')
 
-  // Recent confirmed transactions (last 5), sorted newest first
+  // All confirmed transactions for the current month, newest first.
+  // No slice — all records are shown so the dashboard always reflects the full DB state.
   const recentConfirmed = useMemo(
-    () => [...confirmedTransactions].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5),
+    () => [...confirmedTransactions].sort((a, b) => b.date.localeCompare(a.date)),
     [confirmedTransactions]
   )
 
