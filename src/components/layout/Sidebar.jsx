@@ -67,7 +67,7 @@ export default function Sidebar({ onClose }) {
           <LogOut size={17} />
           Sign out
         </button>
-        <p className="text-xs text-slate-600 text-center pt-1">BatchFlow v1.0.0</p>
+        <p className="text-xs text-slate-600 text-center pt-1">BatchFlow v1.1.0</p>
       </div>
     </div>
   )
