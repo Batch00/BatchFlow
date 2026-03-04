@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import {
   DndContext, closestCenter,
   KeyboardSensor, PointerSensor, useSensor, useSensors,
@@ -361,9 +361,15 @@ function CategoryCard({ category, isFirst, isLast, transactions, onEdit, onDelet
 
 export default function Categories() {
   const {
-    categories, transactions,
+    categories, transactions, currentMonth,
     addCategory, updateCategory, deleteCategory, moveCategory,
   } = useApp()
+
+  // Scope transaction counts to the currently viewed month
+  const monthTransactions = useMemo(
+    () => transactions.filter(t => t.date?.startsWith(currentMonth)),
+    [transactions, currentMonth]
+  )
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editingCategory, setEditingCategory] = useState(null)
@@ -399,7 +405,7 @@ export default function Categories() {
               category={cat}
               isFirst={idx === 0}
               isLast={idx === cats.length - 1}
-              transactions={transactions}
+              transactions={monthTransactions}
               onEdit={() => openEdit(cat)}
               onDelete={() => handleDelete(cat)}
               onMove={dir => moveCategory(cat.id, dir)}
