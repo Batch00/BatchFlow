@@ -1,4 +1,4 @@
-# BatchFlow v1.1.0 - Claude Instructions
+# BatchFlow v1.2.0 - Claude Instructions
 *Own your flow. Personal zero-based budgeting app backed by Supabase, deployed on Vercel.*
 
 ## Tech Stack
@@ -39,13 +39,14 @@ src/
 │   ├── categories/          # CategoryModal
 │   ├── common/              # MonthSelector, ProgressBar
 │   ├── layout/              # Layout, Sidebar, Header
-│   └── transactions/        # TransactionModal
+│   ├── transactions/        # TransactionModal
+│   └── UpdateNotifier.jsx   # SW registration + "updated" toast
 └── views/
     ├── Auth.jsx              # Sign in / sign up
     ├── Dashboard.jsx         # Category cards, recent activity, FAB
     ├── Budget.jsx            # Inline budget planning + inline rename
     ├── Transactions.jsx      # Transaction list with split-row display, FAB
-    ├── Analytics.jsx         # Recharts: pie, bar, line charts (confirmed only)
+    ├── Analytics.jsx         # Three-tab analytics: This Month, Trends, Activity
     ├── Calendar.jsx          # Monthly income and cash flow calendar
     ├── Categories.jsx        # Category + subcategory management
     └── Settings.jsx          # Install prompt, account, preferences, data export/import
@@ -59,11 +60,13 @@ src/
 
 **`budgetUtils.js`** - pure functions for spending totals and progress. `getCategorySpent` / `getSubcategorySpent` handle both flat and split transactions. `getProgressStatus(spent, planned, type)` accepts `'income'|'expense'`; yellow threshold is 50% for both. Expense: green -> yellow (50%) -> red (strictly over). Income: neutral -> yellow (50%) -> green (100%).
 
+**Over-budget rule** - the only condition that triggers red or an "over" flag anywhere in the app is `spent - planned > 0.01`. Never use raw `>` without the 0.01 guard. At-budget (spent === planned, including floating-point near-equals) must always be treated as fully on-budget, not over.
+
 **Budget writes** use optimistic updates - local state updates immediately, Supabase write is background. Budget plans use DELETE + INSERT (not upsert) to avoid partial unique-index conflicts.
 
 **Routing** - `App.jsx` -> nested under `<Layout />` -> Dashboard / Budget / Transactions / Analytics / Calendar / Categories / Settings. Auth is a standalone route outside Layout.
 
-**PWA** - configured via `vite-plugin-pwa` in `vite.config.js`. Service worker auto-updates; static assets are precached; Supabase API calls use NetworkFirst with a 10-second timeout.
+**PWA** - configured via `vite-plugin-pwa` in `vite.config.js`. `injectRegister: null` - registration is handled entirely by `UpdateNotifier.jsx` so the app controls the reload/toast sequence. `skipWaiting` and `clientsClaim` are both enabled; `cleanupOutdatedCaches` removes stale caches on every update. `UpdateNotifier.jsx` also calls `registration.update()` on `visibilitychange` (iOS re-open) and on an hourly interval for long-running desktop sessions.
 
 **Theme** - dark/light only (no system option). Stored in `batchflow:theme` localStorage key. Default is dark. An inline `<script>` in `index.html` applies `.dark` to `<html>` before React mounts to prevent flash on the login screen.
 
@@ -71,13 +74,15 @@ src/
 
 **Pending transactions** - transactions have `isPending` and `scheduledDate` fields. Pending recurring instances are hidden until 1 day before `scheduledDate`. `isVisiblePending(t, tomorrowStr)` is a shared helper used in Dashboard and Transactions. Confirming a pending transaction shows a 5-second undo toast.
 
-**Recurring rules** - stored in `recurring_rules` table. `generateRecurringInstances(monthKey)` in AppContext creates pending transaction instances for the current month. `updateRecurringRule` deletes all pending instances for the rule and calls `generateRecurringInstances` to regenerate them (prevents stale scheduled_dates when the rule's frequency or start_date changes).
+**Recurring rules** - stored in `recurring_rules` table. `generateRecurringInstances(monthKey)` in AppContext creates pending transaction instances for the current month. `updateRecurringRule` updates ALL transaction rows for the rule (no `is_pending` filter), deletes pending instances, regenerates them, then calls `refreshTransactions()` to sync local state.
 
 **Calendar** - `Calendar.jsx` shows all income for the month: recurring instances (`t.recurringRuleId !== null`) and confirmed one-time income (`!t.isPending`). Cash flow projects running daily balance using this same income set plus all confirmed expense transactions.
 
-**Analytics** - all charts and totals use confirmed-only transactions. `Analytics.jsx` derives `confirmedMonthTransactions` and `confirmedAllTransactions` via `useMemo` by filtering `!t.isPending` before passing to chart subcomponents.
+**Analytics** - three-tab layout (This Month / Trends / Activity). All charts use confirmed-only transactions (`!t.isPending`). This Month tab: donut with Actual/Planned toggle and $ vs % toggle; Planned vs Actual bar with subcategory drill-down on click; Budget Efficiency Score with SVG gauge. Trends tab: date range selector, income vs expenses line, savings rate bar, per-category line with toggleable category chips, monthly summary table. Activity tab: transaction volume bar, day-of-week frequency bar, average transaction size by category.
 
-**`refreshTransactions`** - a useCallback in AppContext that re-fetches all transactions from Supabase and replaces local state. Called on Dashboard mount to ensure fresh data after recurring rule changes or cross-tab edits.
+**Split transactions** - `categoryId: null` on the top-level object signals a split; `splits[]` holds `{ categoryId, subcategoryId, amount }`. Any count or filter query must check `t.splits ? t.splits.some(...) : t.categoryId === ...`.
+
+**`refreshTransactions`** - a useCallback in AppContext that re-fetches all transactions from Supabase and replaces local state. Called on Dashboard mount and after recurring rule updates.
 
 ## Database Schema
 Every table has `user_id`; RLS policies enforce per-user isolation server-side. **Schema changes must be done manually in the Supabase SQL editor - never from app code.**

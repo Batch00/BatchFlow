@@ -1,4 +1,4 @@
-# BatchFlow v1.1.0
+# BatchFlow v1.2.0
 *Own your flow*
 
 A personal zero-based budgeting web app. Plan income and expenses by category, log transactions, and track spending in real time. Backed by Supabase with per-user auth and deployed on Vercel. Installable as a PWA on iOS and Android.
@@ -15,17 +15,44 @@ A personal zero-based budgeting web app. Plan income and expenses by category, l
 - **Transaction logging** - record transactions with amount, date, category, subcategory, merchant, and notes
 - **Split transactions** - split a single transaction across multiple categories and subcategories (e.g. a shopping trip covering groceries and clothing)
 - **Pending transactions** - transactions can be saved as pending and confirmed later; pending items are hidden until 1 day before their scheduled date; confirming shows a 5-second undo toast
-- **Recurring transactions** - define recurring rules (weekly, biweekly, monthly, etc.) and have pending instances generated automatically for the current month
+- **Recurring transactions** - define recurring rules (weekly, biweekly, monthly, etc.) and have pending instances generated automatically for the current month; editing a rule propagates name and amount changes to all past and future instances
 - **Paycheck and calendar planning** - a calendar view shows all income (recurring and one-time confirmed) alongside daily cash flow projections
 - **Quick transaction entry** - floating action button on the Dashboard and Transactions pages opens the transaction form without navigating away
 - **Category management** - add, rename (inline double-click), reorder (arrow buttons), and delete income and expense categories
 - **Subcategory management** - add, rename (inline double-click), drag-and-drop reorder, and delete; renaming from the Budget page syncs everywhere
-- **Analytics** - pie chart category breakdown, monthly spending bar chart, and income vs. expense line chart across recent months; all charts exclude pending transactions
+- **Analytics** - rich multi-tab analytics page with spending breakdowns, trend charts, budget efficiency scoring, and activity metrics (see Analytics section below)
 - **Real-time updates** - Supabase real-time subscriptions keep all open tabs in sync when transactions are added, updated, or deleted
 - **Dark mode** - defaults to dark; toggle to light in Settings; preference persisted in localStorage and applied before React mounts (no flash)
 - **Settings** - install prompt for PWA, account info, preferences (currency, week start, default page), JSON data export and import for full backup and restore
-- **PWA** - installable on iOS and Android directly from the browser; app shell and static assets are cached for offline use; Supabase API calls use a network-first strategy
+- **PWA** - installable on iOS and Android directly from the browser; app shell and static assets are cached for offline use; Supabase API calls use a network-first strategy; the app automatically applies updates in the background and shows a confirmation toast when a new version is live
 - **Multi-user auth** - email/password sign in and sign up via Supabase; every user's data is isolated at the database level via Postgres row-level security
+
+---
+
+## Analytics
+
+The Analytics page is organized into three tabs.
+
+### This Month
+
+- **Spending donut** - toggle between Actual and Planned views; toggle between dollar amounts and percentages; each slice is color-coded to its category
+- **Top categories** - ranked list of your highest-spend categories for the selected month; click any category to see its 6-month spending history
+- **Planned vs. Actual bar chart** - side-by-side comparison of budgeted and actual spend for every expense category; click any bar to expand a subcategory breakdown panel below the chart
+- **Budget Efficiency Score** - a 0-100 score and SVG gauge that measures how closely your actual spending matched your plan; categories at or under budget contribute positively, over-budget categories score zero; exactly hitting your budget counts as 100% for that category
+
+### Trends
+
+- **Date range selector** - choose any window up to the last 24 months
+- **Income vs. Expenses line chart** - monthly income and total expenses plotted side by side
+- **Savings Rate bar chart** - monthly savings rate as a percentage of income; bars are color-coded green (positive) or red (negative)
+- **Per-category spending line chart** - one line per expense category over the selected range; toggle individual categories on and off using the chip list below the chart
+- **Monthly summary table** - month-by-month breakdown of income, expenses, savings, and savings rate in a scrollable table
+
+### Activity
+
+- **Transaction volume** - bar chart of total transactions logged per month
+- **Day-of-week frequency** - bar chart showing which days of the week you transact most; the busiest day is highlighted
+- **Average transaction size by category** - horizontal bar chart ranking categories by their average individual transaction amount
 
 ---
 
@@ -117,13 +144,14 @@ src/
 │   ├── categories/          # CategoryModal
 │   ├── common/              # MonthSelector, ProgressBar
 │   ├── layout/              # Layout, Sidebar, Header
-│   └── transactions/        # TransactionModal
+│   ├── transactions/        # TransactionModal
+│   └── UpdateNotifier.jsx   # Service worker registration and update toast
 └── views/
     ├── Auth.jsx              # Sign in / sign up
     ├── Dashboard.jsx         # Category cards, recent activity, FAB
     ├── Budget.jsx            # Inline budget planning with inline rename
     ├── Transactions.jsx      # Transaction list with split-row display, FAB
-    ├── Analytics.jsx         # Recharts: pie, bar, and line charts
+    ├── Analytics.jsx         # Three-tab analytics: This Month, Trends, Activity
     ├── Calendar.jsx          # Monthly income and cash flow calendar
     ├── Categories.jsx        # Category and subcategory management
     └── Settings.jsx          # Install prompt, account, preferences, data tools
