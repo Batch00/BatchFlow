@@ -618,8 +618,8 @@ export function AppProvider({ children }) {
     const updatedRule = dbToRecurringRule(row)
     setRecurringRules(prev => prev.map(r => r.id === id ? updatedRule : r))
 
-    // Propagate editable fields to confirmed (past) instances so calendar and
-    // transaction list stay consistent with the updated rule across all months.
+    // Write updated fields to every transaction instance tied to this rule —
+    // past confirmed and future pending alike — with no restriction on status or date.
     await supabase.from('transactions')
       .update({
         merchant: updates.merchant || null,
@@ -630,22 +630,7 @@ export function AppProvider({ children }) {
         subcategory_id: updates.subcategoryId || null,
       })
       .eq('recurring_rule_id', id)
-      .eq('is_pending', false)
       .eq('user_id', user.id)
-
-    setTransactions(prev => prev.map(t =>
-      t.recurringRuleId === id && !t.isPending
-        ? {
-            ...t,
-            merchant: updates.merchant || '',
-            notes: updates.notes || '',
-            amount: updates.amount,
-            type: updates.type,
-            categoryId: updates.categoryId || null,
-            subcategoryId: updates.subcategoryId || null,
-          }
-        : t
-    ))
 
     // Delete ALL pending instances for this rule. Patching fields in-place is not
     // enough because schedule changes (start_date / frequency / end_date) would leave
@@ -657,13 +642,15 @@ export function AppProvider({ children }) {
       .eq('is_pending', true)
       .eq('user_id', user.id)
 
-    setTransactions(prev => prev.filter(t => !(t.recurringRuleId === id && t.isPending)))
-
     // Regenerate fresh pending instances for the current month based on the updated rule.
     await generateRecurringInstances(currentMonthRef.current)
 
+    // Re-fetch all transactions from Supabase so local state accurately reflects
+    // the bulk UPDATE above across all months and statuses.
+    await refreshTransactions()
+
     return updatedRule
-  }, [user, generateRecurringInstances])
+  }, [user, generateRecurringInstances, refreshTransactions])
 
   const pauseRecurringRule = useCallback(async (id, isPaused) => {
     const { error } = await supabase

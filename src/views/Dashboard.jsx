@@ -155,7 +155,7 @@ export default function Dashboard() {
   const monthHasBudget =
     Object.values(budgets[currentMonth]?.planned ?? {}).some(v => v > 0) ||
     Object.values(budgets[currentMonth]?.subcategoryPlanned ?? {}).some(v => v > 0)
-  const monthHasTransactions = currentMonthTransactions.length > 0
+  const monthHasTransactions = currentMonthTransactions.some(t => !t.isPending)
   const isUninitialized = !monthHasBudget && !monthHasTransactions
 
   // Nearest months with budget data, for the empty-state copy picker
