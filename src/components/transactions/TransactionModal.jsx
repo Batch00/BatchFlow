@@ -582,8 +582,8 @@ export default function TransactionModal({ isOpen, onClose, editingTransaction =
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           {/* Amount + Date — stacked on mobile, side by side on sm+ */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 overflow-hidden">
+            <div className="min-w-0">
               <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5">
                 Amount <span className="text-red-400">*</span>
               </label>
@@ -614,7 +614,7 @@ export default function TransactionModal({ isOpen, onClose, editingTransaction =
                 type="date"
                 value={form.date}
                 onChange={e => setField('date', e.target.value)}
-                className={`w-full max-w-full px-3 py-2 text-sm border rounded-lg outline-none focus:ring-2 focus:ring-indigo-200 transition-colors bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 ${
+                className={`w-full px-3 py-2 text-sm border rounded-lg outline-none focus:ring-2 focus:ring-indigo-200 transition-colors bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 ${
                   errors.date
                     ? 'border-red-300 focus:border-red-400'
                     : 'border-slate-200 dark:border-slate-600 focus:border-indigo-400'

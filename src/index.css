@@ -1,2 +1,12 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
+
+/* iOS Safari and Android Chrome render <input type="date"> with native chrome
+   that ignores CSS width constraints. Resetting -webkit-appearance forces the
+   browser to treat the element as a plain box, so width: 100% is respected.
+   The native date-picker still opens on tap — only the visual chrome is reset. */
+input[type="date"] {
+  -webkit-appearance: none;
+  appearance: none;
+  box-sizing: border-box;
+}
