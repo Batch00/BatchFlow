@@ -618,6 +618,35 @@ export function AppProvider({ children }) {
     const updatedRule = dbToRecurringRule(row)
     setRecurringRules(prev => prev.map(r => r.id === id ? updatedRule : r))
 
+    // Propagate editable fields to confirmed (past) instances so calendar and
+    // transaction list stay consistent with the updated rule across all months.
+    await supabase.from('transactions')
+      .update({
+        merchant: updates.merchant || null,
+        notes: updates.notes || null,
+        amount: updates.amount,
+        type: updates.type,
+        category_id: updates.categoryId || null,
+        subcategory_id: updates.subcategoryId || null,
+      })
+      .eq('recurring_rule_id', id)
+      .eq('is_pending', false)
+      .eq('user_id', user.id)
+
+    setTransactions(prev => prev.map(t =>
+      t.recurringRuleId === id && !t.isPending
+        ? {
+            ...t,
+            merchant: updates.merchant || '',
+            notes: updates.notes || '',
+            amount: updates.amount,
+            type: updates.type,
+            categoryId: updates.categoryId || null,
+            subcategoryId: updates.subcategoryId || null,
+          }
+        : t
+    ))
+
     // Delete ALL pending instances for this rule. Patching fields in-place is not
     // enough because schedule changes (start_date / frequency / end_date) would leave
     // instances with stale scheduled_dates, causing duplicates the next time
