@@ -606,7 +606,7 @@ export default function TransactionModal({ isOpen, onClose, editingTransaction =
               {errors.amount && <p className="text-xs text-red-500 mt-1">{errors.amount}</p>}
             </div>
 
-            <div>
+            <div className="min-w-0">
               <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5">
                 Date <span className="text-red-400">*</span>
               </label>
@@ -614,7 +614,7 @@ export default function TransactionModal({ isOpen, onClose, editingTransaction =
                 type="date"
                 value={form.date}
                 onChange={e => setField('date', e.target.value)}
-                className={`w-full px-3 py-2 text-sm border rounded-lg outline-none focus:ring-2 focus:ring-indigo-200 transition-colors bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 ${
+                className={`w-full max-w-full px-3 py-2 text-sm border rounded-lg outline-none focus:ring-2 focus:ring-indigo-200 transition-colors bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 ${
                   errors.date
                     ? 'border-red-300 focus:border-red-400'
                     : 'border-slate-200 dark:border-slate-600 focus:border-indigo-400'

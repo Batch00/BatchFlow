@@ -185,11 +185,15 @@ function CategoryCard({ category, isFirst, isLast, transactions, onEdit, onDelet
     if (e.key === 'Escape') { setNameValue(category.name); setNameEditing(false) }
   }
 
-  const catTransactionCount = transactions.filter(t => t.categoryId === category.id).length
+  const catTransactionCount = transactions.filter(t =>
+    t.splits ? t.splits.some(s => s.categoryId === category.id) : t.categoryId === category.id
+  ).length
   const isIncome = category.type === 'income'
 
   const getSubTransactionCount = (subId) =>
-    transactions.filter(t => t.subcategoryId === subId).length
+    transactions.filter(t =>
+      t.splits ? t.splits.some(s => s.subcategoryId === subId) : t.subcategoryId === subId
+    ).length
 
   const sensors = useSensors(
     useSensor(PointerSensor),
