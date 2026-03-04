@@ -231,7 +231,7 @@ function MonthView({ categories, transactions, budget, budgets, isDark }) {
   const efficiencyScore = useMemo(() => {
     const eligible = categoryData.filter(d => d.planned > 0)
     if (eligible.length === 0) return null
-    const scores = eligible.map(d => d.spent <= d.planned ? (d.spent / d.planned) * 100 : 0)
+    const scores = eligible.map(d => d.spent - d.planned <= 0.01 ? (d.spent / d.planned) * 100 : 0)
     return scores.reduce((s, v) => s + v, 0) / scores.length
   }, [categoryData])
 
@@ -460,12 +460,12 @@ function MonthView({ categories, transactions, budget, budgets, isDark }) {
                 {efficiencyScore >= 80 ? 'Great accuracy' : efficiencyScore >= 60 ? 'Room to improve' : 'Needs attention'}
               </p>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Categories over budget count as 0%. Categories under budget score proportionally.
+                Exactly at budget = 100%. Under budget scores proportionally. Over budget = 0%.
               </p>
               <div className="space-y-0.5 mt-2">
                 {categoryData.filter(d => d.planned > 0).slice(0, 4).map(d => {
-                  const s = d.spent <= d.planned ? Math.round((d.spent / d.planned) * 100) : 0
-                  const over = d.spent > d.planned
+                  const s = d.spent - d.planned <= 0.01 ? Math.round((d.spent / d.planned) * 100) : 0
+                  const over = d.spent - d.planned > 0.01
                   return (
                     <div key={d.id} className="flex items-center gap-2 text-xs">
                       <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: d.color }} />
