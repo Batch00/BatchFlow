@@ -9,7 +9,9 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      injectRegister: 'auto',
+      // Registration is handled by UpdateNotifier.jsx so we have full control over
+      // the controllerchange → reload sequence and can show the "updated" toast.
+      injectRegister: null,
       includeAssets: ['favicon.svg', 'favicon.ico', 'apple-touch-icon-180x180.png'],
       manifest: {
         name: 'BatchFlow',
@@ -31,6 +33,9 @@ export default defineConfig({
       workbox: {
         clientsClaim: true,
         skipWaiting: true,
+        // Remove all caches from previous SW versions when the new SW activates,
+        // ensuring stale assets are never served after an update.
+        cleanupOutdatedCaches: true,
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
         runtimeCaching: [
           {

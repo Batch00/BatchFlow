@@ -12,6 +12,7 @@ import Recurring from './views/Recurring'
 import Calendar from './views/Calendar'
 import Settings from './views/Settings'
 import Auth from './views/Auth'
+import UpdateNotifier from './components/UpdateNotifier'
 
 // Reads the user's defaultPage preference and redirects away from '/' if set.
 function DefaultPage() {
@@ -55,7 +56,10 @@ export default function App() {
   // This prevents a flash of the login page on every refresh.
   if (authLoading) return null
 
-  if (!user) return <Auth />
-
-  return <AppRoutes />
+  return (
+    <>
+      <UpdateNotifier />
+      {user ? <AppRoutes /> : <Auth />}
+    </>
+  )
 }
