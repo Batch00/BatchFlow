@@ -930,11 +930,11 @@ function SubcategoriesView({ categories, allTransactions, budgets, isDark }) {
     return expenseCategories.map(cat => {
       const val = viewMode === 'actual'
         ? getCategorySpent(expenseRangeTxns, cat.id)
-        : getCategoryEffectivePlanned(cat, budgets[rangeTo] ?? {})
+        : selectedMonths.reduce((s, mk) => s + getCategoryEffectivePlanned(cat, budgets[mk] ?? {}), 0)
       if (val <= 0) return null
       return { name: cat.name, size: val, catId: cat.id, catColor: cat.color }
     }).filter(Boolean)
-  }, [expenseCategories, expenseRangeTxns, viewMode, zoomedCatId, selectedMonths, budgets, rangeTo])
+  }, [expenseCategories, expenseRangeTxns, viewMode, zoomedCatId, selectedMonths, budgets])
 
   // ── Subcategory table rows ────────────────────────────────────────────────
   const subcategoryRows = useMemo(() => {
