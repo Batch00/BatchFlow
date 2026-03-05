@@ -4,8 +4,9 @@ import {
   PieChart, Pie, Cell, Tooltip,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, LabelList,
   LineChart, Line, Legend,
+  Treemap,
 } from 'recharts'
-import { TrendingUp, TrendingDown, Wallet, Hash, X, ChevronDown, ChevronRight, Target } from 'lucide-react'
+import { TrendingUp, TrendingDown, Wallet, Hash, X, ChevronDown, ChevronRight, Target, Search, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { formatCurrency, formatMonthLabel, getMonthKey } from '../utils/formatters'
 import {
@@ -876,6 +877,420 @@ function ActivityView({ categories, allTransactions, isDark }) {
   )
 }
 
+// ── SubcategoriesView ─────────────────────────────────────────────────────────
+
+function SubcategoriesView({ categories, allTransactions, budgets, isDark }) {
+  const all12 = useMemo(() => getLastNMonths(12), [])
+  const [rangeFrom, setRangeFrom] = useState(all12[0])
+  const [rangeTo, setRangeTo] = useState(all12[all12.length - 1])
+  const [viewMode, setViewMode] = useState('actual') // 'actual' | 'planned'
+  const [catFilter, setCatFilter] = useState('all')
+  const [search, setSearch] = useState('')
+  const [sortKey, setSortKey] = useState('spent')
+  const [sortDir, setSortDir] = useState('desc')
+  const [zoomedCatId, setZoomedCatId] = useState(null)
+  const [selectedSubId, setSelectedSubId] = useState(null)
+
+  const expenseCategories = categories.filter(c => c.type === 'expense')
+
+  const selectedMonths = useMemo(
+    () => ALL_24_MONTHS.filter(k => k >= rangeFrom && k <= rangeTo),
+    [rangeFrom, rangeTo]
+  )
+
+  const confirmedTxns = useMemo(
+    () => allTransactions.filter(t => !t.isPending),
+    [allTransactions]
+  )
+
+  const expenseRangeTxns = useMemo(
+    () => confirmedTxns.filter(t => {
+      const mk = t.date?.slice(0, 7)
+      return t.type === 'expense' && mk && mk >= rangeFrom && mk <= rangeTo
+    }),
+    [confirmedTxns, rangeFrom, rangeTo]
+  )
+
+  // Flat subcategory rows with computed metrics
+  const subcategoryRows = useMemo(() => {
+    const totalSpent = expenseRangeTxns.reduce((s, t) => s + (t.amount ?? 0), 0)
+    const rows = []
+    expenseCategories.forEach(cat => {
+      cat.subcategories.forEach(sub => {
+        const spent = getSubcategorySpent(expenseRangeTxns, sub.id)
+        const planned = selectedMonths.reduce(
+          (s, mk) => s + getSubcategoryPlanned(budgets[mk] ?? {}, sub.id),
+          0
+        )
+        const txnCount = expenseRangeTxns.filter(t =>
+          t.splits ? t.splits.some(s => s.subcategoryId === sub.id) : t.subcategoryId === sub.id
+        ).length
+        if (spent > 0 || planned > 0) {
+          rows.push({
+            id: sub.id,
+            name: sub.name,
+            categoryId: cat.id,
+            categoryName: cat.name,
+            categoryColor: cat.color,
+            spent,
+            planned,
+            remaining: planned - spent,
+            pctOfTotal: totalSpent > 0 ? (spent / totalSpent) * 100 : 0,
+            txnCount,
+          })
+        }
+      })
+    })
+    return rows
+  }, [expenseCategories, expenseRangeTxns, selectedMonths, budgets])
+
+  // Filtered + sorted table rows
+  const tableRows = useMemo(() => {
+    let rows = subcategoryRows
+    if (catFilter !== 'all') rows = rows.filter(r => r.categoryId === catFilter)
+    if (search.trim()) {
+      const q = search.trim().toLowerCase()
+      rows = rows.filter(r =>
+        r.name.toLowerCase().includes(q) || r.categoryName.toLowerCase().includes(q)
+      )
+    }
+    return [...rows].sort((a, b) => {
+      const dir = sortDir === 'asc' ? 1 : -1
+      const av = a[sortKey], bv = b[sortKey]
+      if (typeof av === 'string') return dir * av.localeCompare(bv)
+      return dir * ((av ?? 0) - (bv ?? 0))
+    })
+  }, [subcategoryRows, catFilter, search, sortKey, sortDir])
+
+  // Treemap data — hierarchical (category > subcategory) or flat when zoomed
+  const treemapData = useMemo(() => {
+    if (zoomedCatId) {
+      const cat = expenseCategories.find(c => c.id === zoomedCatId)
+      if (!cat) return []
+      return cat.subcategories.map(sub => {
+        const val = viewMode === 'actual'
+          ? getSubcategorySpent(expenseRangeTxns, sub.id)
+          : selectedMonths.reduce((s, mk) => s + getSubcategoryPlanned(budgets[mk] ?? {}, sub.id), 0)
+        return { name: sub.name, size: val, subId: sub.id, catId: cat.id, catColor: cat.color }
+      }).filter(d => d.size > 0)
+    }
+    return expenseCategories.map(cat => {
+      if (cat.subcategories.length > 0) {
+        const children = cat.subcategories.map(sub => {
+          const val = viewMode === 'actual'
+            ? getSubcategorySpent(expenseRangeTxns, sub.id)
+            : selectedMonths.reduce((s, mk) => s + getSubcategoryPlanned(budgets[mk] ?? {}, sub.id), 0)
+          return { name: sub.name, size: val, subId: sub.id, catId: cat.id, catColor: cat.color }
+        }).filter(d => d.size > 0)
+        if (children.length === 0) return null
+        return { name: cat.name, catId: cat.id, catColor: cat.color, children }
+      }
+      // Category with no subcategories — render as leaf
+      const val = viewMode === 'actual'
+        ? getCategorySpent(expenseRangeTxns, cat.id)
+        : getCategoryEffectivePlanned(cat, budgets[rangeTo] ?? {})
+      if (val <= 0) return null
+      return { name: cat.name, size: val, catId: cat.id, catColor: cat.color }
+    }).filter(Boolean)
+  }, [expenseCategories, expenseRangeTxns, viewMode, zoomedCatId, selectedMonths, budgets, rangeTo])
+
+  // Selected subcategory details + 12-month trend
+  const selectedSub = useMemo(() => {
+    if (!selectedSubId) return null
+    for (const cat of expenseCategories) {
+      const sub = cat.subcategories.find(s => s.id === selectedSubId)
+      if (sub) return { ...sub, categoryName: cat.name, categoryColor: cat.color }
+    }
+    return null
+  }, [selectedSubId, expenseCategories])
+
+  const trend12Months = useMemo(() => getLastNMonths(12), [])
+
+  const trendData = useMemo(() => {
+    if (!selectedSubId) return []
+    return trend12Months.map(key => {
+      const monthTxns = confirmedTxns.filter(
+        t => t.date?.startsWith(key) && t.type === 'expense'
+      )
+      return {
+        label: shortMonth(key),
+        Actual: getSubcategorySpent(monthTxns, selectedSubId),
+        Planned: getSubcategoryPlanned(budgets[key] ?? {}, selectedSubId),
+      }
+    })
+  }, [selectedSubId, trend12Months, confirmedTxns, budgets])
+
+  const zoomedCat = expenseCategories.find(c => c.id === zoomedCatId)
+
+  const handleSort = (key) => {
+    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortKey(key); setSortDir('desc') }
+  }
+
+  function SortIcon({ k }) {
+    if (sortKey !== k) return <ArrowUpDown size={11} className="opacity-30 ml-0.5 flex-shrink-0" />
+    return sortDir === 'asc'
+      ? <ArrowUp size={11} className="ml-0.5 text-indigo-500 flex-shrink-0" />
+      : <ArrowDown size={11} className="ml-0.5 text-indigo-500 flex-shrink-0" />
+  }
+
+  // Treemap cell renderer — called per node by Recharts
+  const renderTreemapCell = ({ x, y, width, height, name, size, catColor, catId, subId, depth }) => {
+    if (depth === 0 || !width || !height || width < 4 || height < 4) return <g />
+    const isZoomed = Boolean(zoomedCatId)
+    const isSubNode = (isZoomed && depth === 1) || (!isZoomed && depth === 2)
+    const isCatNode = !isZoomed && depth === 1
+    const color = catColor || '#6366f1'
+    const displayAmt = typeof size === 'number' && size > 0 ? size : 0
+    const textFits = width > 52 && height > 20
+    const showAmt = width > 64 && height > 42 && displayAmt > 0
+    const isHighlighted = isSubNode && selectedSubId === subId
+
+    const handleClick = () => {
+      if (isCatNode && catId) {
+        const cat = expenseCategories.find(c => c.id === catId)
+        if (cat?.subcategories.length > 0) setZoomedCatId(catId)
+      } else if (isSubNode && subId) {
+        setSelectedSubId(prev => prev === subId ? null : subId)
+      }
+    }
+
+    return (
+      <g onClick={handleClick} style={{ cursor: isCatNode || isSubNode ? 'pointer' : 'default' }}>
+        <rect
+          x={x + 1} y={y + 1}
+          width={Math.max(0, width - 2)} height={Math.max(0, height - 2)}
+          fill={color}
+          fillOpacity={isCatNode ? 0.58 : 0.88}
+          rx={3}
+        />
+        {isHighlighted && (
+          <rect
+            x={x + 1} y={y + 1}
+            width={Math.max(0, width - 2)} height={Math.max(0, height - 2)}
+            fill="none" stroke="#ffffff" strokeWidth={2.5} rx={3}
+          />
+        )}
+        {textFits && (
+          <text
+            x={x + width / 2} y={y + height / 2 - (showAmt ? 8 : 0)}
+            textAnchor="middle" dominantBaseline="middle"
+            fontSize={Math.min(13, Math.max(9, width / 9))}
+            fontWeight={600} fill="#ffffff"
+            style={{ pointerEvents: 'none', userSelect: 'none' }}>
+            {name}
+          </text>
+        )}
+        {showAmt && (
+          <text
+            x={x + width / 2} y={y + height / 2 + 10}
+            textAnchor="middle" dominantBaseline="middle"
+            fontSize={Math.min(11, Math.max(9, width / 11))}
+            fill="rgba(255,255,255,0.78)"
+            style={{ pointerEvents: 'none', userSelect: 'none' }}>
+            {formatCurrency(displayAmt)}
+          </text>
+        )}
+      </g>
+    )
+  }
+
+  const TABLE_COLS = [
+    { key: 'name', label: 'Subcategory', align: 'left' },
+    { key: 'categoryName', label: 'Category', align: 'left' },
+    { key: 'planned', label: 'Planned', align: 'right' },
+    { key: 'spent', label: 'Actual', align: 'right' },
+    { key: 'remaining', label: 'Remaining', align: 'right' },
+    { key: 'pctOfTotal', label: '% Total', align: 'right' },
+    { key: 'txnCount', label: 'Txns', align: 'right' },
+  ]
+
+  return (
+    <div className="space-y-5">
+      {/* Filters row */}
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Range</span>
+        <div className="flex items-center gap-2">
+          <select value={rangeFrom} onChange={e => setRangeFrom(e.target.value)}
+            className="text-sm border border-slate-200 dark:border-slate-600 rounded-lg px-2.5 py-1.5 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+            {ALL_24_MONTHS.map(k => <option key={k} value={k}>{formatMonthLabel(k)}</option>)}
+          </select>
+          <span className="text-xs text-slate-400">to</span>
+          <select value={rangeTo} onChange={e => setRangeTo(e.target.value)}
+            className="text-sm border border-slate-200 dark:border-slate-600 rounded-lg px-2.5 py-1.5 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+            {ALL_24_MONTHS.filter(k => k >= rangeFrom).map(k => <option key={k} value={k}>{formatMonthLabel(k)}</option>)}
+          </select>
+        </div>
+        <div className="flex gap-1">
+          <ToggleButton label="Actual" active={viewMode === 'actual'} onClick={() => setViewMode('actual')} />
+          <ToggleButton label="Planned" active={viewMode === 'planned'} onClick={() => setViewMode('planned')} />
+        </div>
+        <select value={catFilter} onChange={e => setCatFilter(e.target.value)}
+          className="text-sm border border-slate-200 dark:border-slate-600 rounded-lg px-2.5 py-1.5 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+          <option value="all">All categories</option>
+          {expenseCategories.map(cat => <option key={cat.id} value={cat.id}>{cat.name}</option>)}
+        </select>
+      </div>
+
+      {/* Treemap */}
+      <SectionCard
+        title={zoomedCatId ? `${zoomedCat?.name} — Subcategories` : 'Spending Treemap'}
+        subtitle={
+          zoomedCatId
+            ? 'Click a block to view its 12-month trend'
+            : `${viewMode === 'actual' ? 'Actual spending' : 'Planned amounts'} by subcategory. Click a category to zoom in.`
+        }
+        action={
+          zoomedCatId ? (
+            <button
+              onClick={() => setZoomedCatId(null)}
+              className="flex items-center gap-1 text-xs text-indigo-600 dark:text-indigo-400 font-medium hover:underline">
+              <X size={12} /> All categories
+            </button>
+          ) : null
+        }
+      >
+        {treemapData.length === 0 ? (
+          <EmptyChart message="No data for this period." />
+        ) : (
+          <div style={{ height: 340 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <Treemap
+                data={treemapData}
+                dataKey="size"
+                aspectRatio={16 / 9}
+                content={renderTreemapCell}
+              />
+            </ResponsiveContainer>
+          </div>
+        )}
+      </SectionCard>
+
+      {/* Breakdown table */}
+      <SectionCard
+        title="Subcategory Breakdown"
+        subtitle="Click a row to see its 12-month trend. Sort by any column."
+        action={
+          <div className="relative">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search..."
+              className="text-xs border border-slate-200 dark:border-slate-600 rounded-lg pl-7 pr-2.5 py-1.5 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400 w-36"
+            />
+          </div>
+        }
+      >
+        {tableRows.length === 0 ? (
+          <EmptyChart message="No subcategory data for this period." />
+        ) : (
+          <>
+            <div className="overflow-x-auto -mx-1">
+              <table className="w-full text-xs min-w-[620px]">
+                <thead>
+                  <tr className="border-b border-slate-100 dark:border-slate-700">
+                    {TABLE_COLS.map(col => (
+                      <th key={col.key}
+                        onClick={() => handleSort(col.key)}
+                        className={`py-2 px-2 font-semibold text-slate-500 dark:text-slate-400 cursor-pointer hover:text-slate-700 dark:hover:text-slate-200 transition-colors select-none whitespace-nowrap text-${col.align}`}>
+                        <span className="inline-flex items-center gap-0.5">
+                          {col.label}
+                          <SortIcon k={col.key} />
+                        </span>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50 dark:divide-slate-700/40">
+                  {tableRows.map(row => {
+                    const isSelected = selectedSubId === row.id
+                    const isOver = row.remaining < -0.01
+                    return (
+                      <tr key={row.id}
+                        onClick={() => setSelectedSubId(prev => prev === row.id ? null : row.id)}
+                        className={`cursor-pointer transition-colors ${
+                          isSelected
+                            ? 'bg-indigo-50 dark:bg-indigo-900/20'
+                            : 'hover:bg-slate-50 dark:hover:bg-slate-700/40'
+                        }`}>
+                        <td className="py-2.5 px-2">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: row.categoryColor }} />
+                            <span className="font-medium text-slate-700 dark:text-slate-200">{row.name}</span>
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-2 text-slate-500 dark:text-slate-400">{row.categoryName}</td>
+                        <td className="py-2.5 px-2 text-right text-slate-400 dark:text-slate-500">
+                          {row.planned > 0 ? formatCurrency(row.planned) : <span className="text-slate-300 dark:text-slate-600">—</span>}
+                        </td>
+                        <td className="py-2.5 px-2 text-right font-semibold text-slate-700 dark:text-slate-200">
+                          {formatCurrency(row.spent)}
+                        </td>
+                        <td className={`py-2.5 px-2 text-right font-medium ${
+                          row.planned === 0
+                            ? 'text-slate-300 dark:text-slate-600'
+                            : isOver ? 'text-red-500' : 'text-emerald-600'
+                        }`}>
+                          {row.planned > 0
+                            ? (isOver
+                                ? `${formatCurrency(Math.abs(row.remaining))} over`
+                                : formatCurrency(row.remaining))
+                            : '—'}
+                        </td>
+                        <td className="py-2.5 px-2 text-right text-slate-500 dark:text-slate-400">
+                          {row.pctOfTotal >= 0.05 ? `${row.pctOfTotal.toFixed(1)}%` : row.pctOfTotal > 0 ? '<0.1%' : '—'}
+                        </td>
+                        <td className="py-2.5 px-2 text-right text-slate-400 dark:text-slate-500">{row.txnCount || '—'}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* 12-month trend panel for selected subcategory */}
+            {selectedSubId && selectedSub && (
+              <div className="mt-5 pt-5 border-t border-slate-100 dark:border-slate-700">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: selectedSub.categoryColor }} />
+                    <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">{selectedSub.name}</span>
+                    <span className="text-xs text-slate-400 dark:text-slate-500">· {selectedSub.categoryName} · 12-month trend</span>
+                  </div>
+                  <button onClick={() => setSelectedSubId(null)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors flex-shrink-0">
+                    <X size={14} />
+                  </button>
+                </div>
+                {trendData.every(d => d.Actual === 0 && d.Planned === 0) ? (
+                  <EmptyChart message="No data for this subcategory in the last 12 months." />
+                ) : (
+                  <div style={{ height: 220 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={trendData} margin={{ top: 5, right: 20, bottom: 5, left: 10 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#334155' : '#f1f5f9'} vertical={false} />
+                        <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                        <YAxis tickFormatter={shortCurrency} tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} width={52} />
+                        <Tooltip content={<CurrencyTooltip isDark={isDark} />} />
+                        <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
+                        <Line type="monotone" dataKey="Actual" stroke={selectedSub.categoryColor} strokeWidth={2.5}
+                          dot={{ r: 3, fill: selectedSub.categoryColor, strokeWidth: 0 }}
+                          activeDot={{ r: 5, strokeWidth: 0 }} />
+                        <Line type="monotone" dataKey="Planned" stroke={selectedSub.categoryColor} strokeWidth={1.5}
+                          strokeDasharray="5 3" strokeOpacity={0.5} dot={false} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </SectionCard>
+    </div>
+  )
+}
+
 // ── Analytics (main view) ─────────────────────────────────────────────────────
 
 export default function Analytics() {
@@ -892,9 +1307,10 @@ export default function Analytics() {
 
   return (
     <div className="space-y-5 max-w-4xl">
-      <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 rounded-xl p-1 w-fit">
+      <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 rounded-xl p-1 w-fit flex-wrap">
         <Tab label="This Month" active={tab === 'month'} onClick={() => setTab('month')} />
         <Tab label="Trends" active={tab === 'trends'} onClick={() => setTab('trends')} />
+        <Tab label="Subcategories" active={tab === 'subcategories'} onClick={() => setTab('subcategories')} />
         <Tab label="Activity" active={tab === 'activity'} onClick={() => setTab('activity')} />
       </div>
 
@@ -909,6 +1325,14 @@ export default function Analytics() {
       )}
       {tab === 'trends' && (
         <TrendsView
+          categories={categories}
+          allTransactions={transactions}
+          budgets={budgets}
+          isDark={isDark}
+        />
+      )}
+      {tab === 'subcategories' && (
+        <SubcategoriesView
           categories={categories}
           allTransactions={transactions}
           budgets={budgets}
