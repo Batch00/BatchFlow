@@ -184,7 +184,7 @@ export default function Calendar() {
   const selectedEvents = selectedDay != null ? (eventsByDay[selectedDay] ?? { transactions: [] }) : null
 
   return (
-    <div className="p-4 md:p-6 space-y-6 max-w-5xl mx-auto">
+    <div className="space-y-6 max-w-5xl">
       {/* Header */}
       <div>
         <h1 className="text-xl font-bold text-slate-900 dark:text-white">Calendar</h1>
