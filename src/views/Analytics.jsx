@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import {
   ResponsiveContainer,
   PieChart, Pie, Cell, Tooltip,
@@ -6,9 +6,10 @@ import {
   LineChart, Line, Legend,
   Treemap,
 } from 'recharts'
-import { TrendingUp, TrendingDown, Wallet, Hash, X, ChevronDown, ChevronRight, Target, Search, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
+import { TrendingUp, TrendingDown, Wallet, Hash, X, ChevronDown, ChevronRight, Target, Search, ArrowUpDown, ArrowUp, ArrowDown, RotateCcw } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { formatCurrency, formatMonthLabel, getMonthKey } from '../utils/formatters'
+import { loadData, saveData } from '../utils/storage'
 import {
   getCategorySpent, getCategoryEffectivePlanned,
   getSubcategorySpent, getSubcategoryPlanned,
@@ -42,6 +43,37 @@ function pct(value, total) {
 }
 
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+// ── Persistent filter helpers ──────────────────────────────────────────────────
+
+function getLastNMonthsFrom(n, referenceKey) {
+  const [y, m] = referenceKey.split('-').map(Number)
+  const months = []
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(y, m - 1 - i, 1)
+    months.push(getMonthKey(d))
+  }
+  return months
+}
+
+function getDefaultFilters(currentMonth) {
+  const months12 = getLastNMonthsFrom(12, currentMonth)
+  return {
+    tab: 'month',
+    donutMode: 'actual',
+    showPct: false,
+    trendFrom: months12[0],
+    trendTo: months12[months12.length - 1],
+    trendHiddenCats: [],
+    subRangeFrom: months12[0],
+    subRangeTo: months12[months12.length - 1],
+    subViewMode: 'actual',
+    subCatFilter: 'all',
+    subSearch: '',
+    subSortKey: 'spent',
+    subSortDir: 'desc',
+  }
+}
 
 // ── Custom Tooltips ───────────────────────────────────────────────────────────
 
@@ -176,9 +208,7 @@ function EfficiencyGauge({ score }) {
 
 // ── MonthView ─────────────────────────────────────────────────────────────────
 
-function MonthView({ categories, transactions, budget, budgets, isDark }) {
-  const [donutMode, setDonutMode] = useState('actual') // 'actual' | 'planned'
-  const [showPct, setShowPct] = useState(false)
+function MonthView({ categories, transactions, budget, budgets, isDark, donutMode, setDonutMode, showPct, setShowPct }) {
   const [expandedCatId, setExpandedCatId] = useState(null) // category history
   const [drillCatId, setDrillCatId] = useState(null) // subcategory drill-down
 
@@ -490,11 +520,8 @@ function MonthView({ categories, transactions, budget, budgets, isDark }) {
 
 const ALL_24_MONTHS = getLastNMonths(24)
 
-function TrendsView({ categories, allTransactions, budgets, isDark }) {
-  const all12 = useMemo(() => getLastNMonths(12), [])
-  const [dateFrom, setDateFrom] = useState(all12[0])
-  const [dateTo, setDateTo] = useState(all12[all12.length - 1])
-  const [hiddenCats, setHiddenCats] = useState(new Set())
+function TrendsView({ categories, allTransactions, budgets, isDark, dateFrom, setDateFrom, dateTo, setDateTo, hiddenCats, setHiddenCats }) {
+  // hiddenCats is an array of category IDs stored in persistent filter state
 
   const expenseCategories = categories.filter(c => c.type === 'expense')
 
@@ -545,13 +572,11 @@ function TrendsView({ categories, allTransactions, budgets, isDark }) {
   const hasAnyData = trendData.some(d => d.Income > 0 || d.Expenses > 0)
   const hasCatData = catTrendData.some(row => expenseCategories.some(c => (row[c.id] ?? 0) > 0))
 
-  const toggleCat = (id) => setHiddenCats(prev => {
-    const next = new Set(prev)
-    if (next.has(id)) next.delete(id); else next.add(id)
-    return next
-  })
+  const toggleCat = (id) => setHiddenCats(prev =>
+    prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+  )
 
-  const visibleCats = expenseCategories.filter(c => !hiddenCats.has(c.id))
+  const visibleCats = expenseCategories.filter(c => !hiddenCats.includes(c.id))
 
   return (
     <div className="space-y-5">
@@ -641,7 +666,7 @@ function TrendsView({ categories, allTransactions, budgets, isDark }) {
         {/* Category toggle chips */}
         <div className="flex flex-wrap gap-1.5 mb-4">
           {expenseCategories.map(cat => {
-            const hidden = hiddenCats.has(cat.id)
+            const hidden = hiddenCats.includes(cat.id)
             return (
               <button key={cat.id} onClick={() => toggleCat(cat.id)}
                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
@@ -879,17 +904,9 @@ function ActivityView({ categories, allTransactions, isDark }) {
 
 // ── SubcategoriesView ─────────────────────────────────────────────────────────
 
-function SubcategoriesView({ categories, allTransactions, budgets, isDark }) {
-  const all12 = useMemo(() => getLastNMonths(12), [])
-  const [rangeFrom, setRangeFrom] = useState(all12[0])
-  const [rangeTo, setRangeTo] = useState(all12[all12.length - 1])
-  const [viewMode, setViewMode] = useState('actual') // 'actual' | 'planned'
-  const [catFilter, setCatFilter] = useState('all')  // table-only filter
-  const [search, setSearch] = useState('')
-  const [sortKey, setSortKey] = useState('spent')
-  const [sortDir, setSortDir] = useState('desc')
-  const [zoomedCatId, setZoomedCatId] = useState(null)
-  const [selectedSubId, setSelectedSubId] = useState(null)
+function SubcategoriesView({ categories, allTransactions, budgets, isDark, rangeFrom, setRangeFrom, rangeTo, setRangeTo, viewMode, setViewMode, catFilter, setCatFilter, search, setSearch, sortKey, setSortKey, sortDir, setSortDir }) {
+  const [zoomedCatId, setZoomedCatId] = useState(null)   // ephemeral — intentionally resets on tab switch
+  const [selectedSubId, setSelectedSubId] = useState(null) // ephemeral
 
   const expenseCategories = categories.filter(c => c.type === 'expense')
 
@@ -1297,9 +1314,42 @@ function SubcategoriesView({ categories, allTransactions, budgets, isDark }) {
 export default function Analytics() {
   const {
     categories, transactions, budgets,
-    currentMonthTransactions, currentMonthBudget, isDark,
+    currentMonthTransactions, currentMonthBudget, isDark, currentMonth,
   } = useApp()
-  const [tab, setTab] = useState('month')
+
+  // Compute defaults based on currently selected month so reset always lands
+  // at a sensible 12-month range relative to wherever the user is navigating.
+  const defaults = useMemo(() => getDefaultFilters(currentMonth), [currentMonth])
+
+  // Single persisted filter object — survives page navigation via localStorage.
+  const [filters, setFilters] = useState(() => {
+    const saved = loadData('analyticsFilters', null)
+    // Accept saved state only if it has the expected shape (guards against old schema).
+    if (saved && typeof saved === 'object' && 'tab' in saved && 'trendFrom' in saved) return saved
+    return getDefaultFilters(currentMonth)
+  })
+
+  // Write to localStorage on every change.
+  useEffect(() => { saveData('analyticsFilters', filters) }, [filters])
+
+  // Generic setter that handles both direct values and functional updaters.
+  const set = (key) => (valueOrFn) =>
+    setFilters(prev => ({
+      ...prev,
+      [key]: typeof valueOrFn === 'function' ? valueOrFn(prev[key]) : valueOrFn,
+    }))
+
+  // Reset applies fresh defaults from the current month at the moment of clicking.
+  const resetFilters = () => setFilters(getDefaultFilters(currentMonth))
+
+  // Show reset button only when at least one filter differs from its default.
+  const isNonDefault = useMemo(() =>
+    Object.keys(defaults).some(k => {
+      const dv = defaults[k], fv = filters[k] ?? dv
+      return Array.isArray(dv) ? JSON.stringify(fv) !== JSON.stringify(dv) : fv !== dv
+    }),
+    [filters, defaults]
+  )
 
   const confirmedMonthTransactions = useMemo(
     () => currentMonthTransactions.filter(t => !t.isPending),
@@ -1308,39 +1358,73 @@ export default function Analytics() {
 
   return (
     <div className="space-y-5 max-w-4xl">
-      <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 rounded-xl p-1 w-fit flex-wrap">
-        <Tab label="This Month" active={tab === 'month'} onClick={() => setTab('month')} />
-        <Tab label="Trends" active={tab === 'trends'} onClick={() => setTab('trends')} />
-        <Tab label="Subcategories" active={tab === 'subcategories'} onClick={() => setTab('subcategories')} />
-        <Tab label="Activity" active={tab === 'activity'} onClick={() => setTab('activity')} />
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 rounded-xl p-1 flex-wrap">
+          <Tab label="This Month" active={filters.tab === 'month'} onClick={() => set('tab')('month')} />
+          <Tab label="Trends" active={filters.tab === 'trends'} onClick={() => set('tab')('trends')} />
+          <Tab label="Subcategories" active={filters.tab === 'subcategories'} onClick={() => set('tab')('subcategories')} />
+          <Tab label="Activity" active={filters.tab === 'activity'} onClick={() => set('tab')('activity')} />
+        </div>
+        {isNonDefault && (
+          <button
+            onClick={resetFilters}
+            className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-1.5 transition-colors hover:bg-slate-50 dark:hover:bg-slate-700">
+            <RotateCcw size={12} />
+            Reset Filters
+          </button>
+        )}
       </div>
 
-      {tab === 'month' && (
+      {filters.tab === 'month' && (
         <MonthView
           categories={categories}
           transactions={confirmedMonthTransactions}
           budget={currentMonthBudget}
           budgets={budgets}
           isDark={isDark}
+          donutMode={filters.donutMode}
+          setDonutMode={set('donutMode')}
+          showPct={filters.showPct}
+          setShowPct={set('showPct')}
         />
       )}
-      {tab === 'trends' && (
+      {filters.tab === 'trends' && (
         <TrendsView
           categories={categories}
           allTransactions={transactions}
           budgets={budgets}
           isDark={isDark}
+          dateFrom={filters.trendFrom}
+          setDateFrom={set('trendFrom')}
+          dateTo={filters.trendTo}
+          setDateTo={set('trendTo')}
+          hiddenCats={filters.trendHiddenCats}
+          setHiddenCats={set('trendHiddenCats')}
         />
       )}
-      {tab === 'subcategories' && (
+      {filters.tab === 'subcategories' && (
         <SubcategoriesView
           categories={categories}
           allTransactions={transactions}
           budgets={budgets}
           isDark={isDark}
+          rangeFrom={filters.subRangeFrom}
+          setRangeFrom={set('subRangeFrom')}
+          rangeTo={filters.subRangeTo}
+          setRangeTo={set('subRangeTo')}
+          viewMode={filters.subViewMode}
+          setViewMode={set('subViewMode')}
+          catFilter={filters.subCatFilter}
+          setCatFilter={set('subCatFilter')}
+          search={filters.subSearch}
+          setSearch={set('subSearch')}
+          sortKey={filters.subSortKey}
+          setSortKey={set('subSortKey')}
+          sortDir={filters.subSortDir}
+          setSortDir={set('subSortDir')}
         />
       )}
-      {tab === 'activity' && (
+      {filters.tab === 'activity' && (
         <ActivityView
           categories={categories}
           allTransactions={transactions}
