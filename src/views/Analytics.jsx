@@ -884,7 +884,7 @@ function SubcategoriesView({ categories, allTransactions, budgets, isDark }) {
   const [rangeFrom, setRangeFrom] = useState(all12[0])
   const [rangeTo, setRangeTo] = useState(all12[all12.length - 1])
   const [viewMode, setViewMode] = useState('actual') // 'actual' | 'planned'
-  const [catFilter, setCatFilter] = useState('all')
+  const [catFilter, setCatFilter] = useState('all')  // table-only filter
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState('spent')
   const [sortDir, setSortDir] = useState('desc')
@@ -911,7 +911,32 @@ function SubcategoriesView({ categories, allTransactions, budgets, isDark }) {
     [confirmedTxns, rangeFrom, rangeTo]
   )
 
-  // Flat subcategory rows with computed metrics
+  // ── Treemap data (always unfiltered — independent from table filter) ──────
+  // Uses flat arrays at every level so clicks are unambiguous.
+  // Unzoomed: one block per category sized by its total spending.
+  // Zoomed:   one block per subcategory within the selected category.
+  const treemapData = useMemo(() => {
+    if (zoomedCatId) {
+      const cat = expenseCategories.find(c => c.id === zoomedCatId)
+      if (!cat) return []
+      return cat.subcategories.map(sub => {
+        const val = viewMode === 'actual'
+          ? getSubcategorySpent(expenseRangeTxns, sub.id)
+          : selectedMonths.reduce((s, mk) => s + getSubcategoryPlanned(budgets[mk] ?? {}, sub.id), 0)
+        return { name: sub.name, size: val, subId: sub.id, catId: cat.id, catColor: cat.color }
+      }).filter(d => d.size > 0)
+    }
+    // Unzoomed: aggregate per category (no children — flat so parent blocks are always clickable)
+    return expenseCategories.map(cat => {
+      const val = viewMode === 'actual'
+        ? getCategorySpent(expenseRangeTxns, cat.id)
+        : getCategoryEffectivePlanned(cat, budgets[rangeTo] ?? {})
+      if (val <= 0) return null
+      return { name: cat.name, size: val, catId: cat.id, catColor: cat.color }
+    }).filter(Boolean)
+  }, [expenseCategories, expenseRangeTxns, viewMode, zoomedCatId, selectedMonths, budgets, rangeTo])
+
+  // ── Subcategory table rows ────────────────────────────────────────────────
   const subcategoryRows = useMemo(() => {
     const totalSpent = expenseRangeTxns.reduce((s, t) => s + (t.amount ?? 0), 0)
     const rows = []
@@ -944,7 +969,6 @@ function SubcategoriesView({ categories, allTransactions, budgets, isDark }) {
     return rows
   }, [expenseCategories, expenseRangeTxns, selectedMonths, budgets])
 
-  // Filtered + sorted table rows
   const tableRows = useMemo(() => {
     let rows = subcategoryRows
     if (catFilter !== 'all') rows = rows.filter(r => r.categoryId === catFilter)
@@ -962,39 +986,7 @@ function SubcategoriesView({ categories, allTransactions, budgets, isDark }) {
     })
   }, [subcategoryRows, catFilter, search, sortKey, sortDir])
 
-  // Treemap data — hierarchical (category > subcategory) or flat when zoomed
-  const treemapData = useMemo(() => {
-    if (zoomedCatId) {
-      const cat = expenseCategories.find(c => c.id === zoomedCatId)
-      if (!cat) return []
-      return cat.subcategories.map(sub => {
-        const val = viewMode === 'actual'
-          ? getSubcategorySpent(expenseRangeTxns, sub.id)
-          : selectedMonths.reduce((s, mk) => s + getSubcategoryPlanned(budgets[mk] ?? {}, sub.id), 0)
-        return { name: sub.name, size: val, subId: sub.id, catId: cat.id, catColor: cat.color }
-      }).filter(d => d.size > 0)
-    }
-    return expenseCategories.map(cat => {
-      if (cat.subcategories.length > 0) {
-        const children = cat.subcategories.map(sub => {
-          const val = viewMode === 'actual'
-            ? getSubcategorySpent(expenseRangeTxns, sub.id)
-            : selectedMonths.reduce((s, mk) => s + getSubcategoryPlanned(budgets[mk] ?? {}, sub.id), 0)
-          return { name: sub.name, size: val, subId: sub.id, catId: cat.id, catColor: cat.color }
-        }).filter(d => d.size > 0)
-        if (children.length === 0) return null
-        return { name: cat.name, catId: cat.id, catColor: cat.color, children }
-      }
-      // Category with no subcategories — render as leaf
-      const val = viewMode === 'actual'
-        ? getCategorySpent(expenseRangeTxns, cat.id)
-        : getCategoryEffectivePlanned(cat, budgets[rangeTo] ?? {})
-      if (val <= 0) return null
-      return { name: cat.name, size: val, catId: cat.id, catColor: cat.color }
-    }).filter(Boolean)
-  }, [expenseCategories, expenseRangeTxns, viewMode, zoomedCatId, selectedMonths, budgets, rangeTo])
-
-  // Selected subcategory details + 12-month trend
+  // ── Selected subcategory 12-month trend ───────────────────────────────────
   const selectedSub = useMemo(() => {
     if (!selectedSubId) return null
     for (const cat of expenseCategories) {
@@ -1034,35 +1026,34 @@ function SubcategoriesView({ categories, allTransactions, budgets, isDark }) {
       : <ArrowDown size={11} className="ml-0.5 text-indigo-500 flex-shrink-0" />
   }
 
-  // Treemap cell renderer — called per node by Recharts
+  // ── Treemap cell renderer ─────────────────────────────────────────────────
+  // All data is flat (no children) so every rendered node is depth=1.
+  // Unzoomed depth=1 = category block → click zooms in.
+  // Zoomed depth=1   = subcategory block → click selects trend.
   const renderTreemapCell = ({ x, y, width, height, name, size, catColor, catId, subId, depth }) => {
     if (depth === 0 || !width || !height || width < 4 || height < 4) return <g />
     const isZoomed = Boolean(zoomedCatId)
-    const isSubNode = (isZoomed && depth === 1) || (!isZoomed && depth === 2)
-    const isCatNode = !isZoomed && depth === 1
     const color = catColor || '#6366f1'
     const displayAmt = typeof size === 'number' && size > 0 ? size : 0
     const textFits = width > 52 && height > 20
     const showAmt = width > 64 && height > 42 && displayAmt > 0
-    const isHighlighted = isSubNode && selectedSubId === subId
+    const isHighlighted = isZoomed && selectedSubId === subId
 
     const handleClick = () => {
-      if (isCatNode && catId) {
+      if (!isZoomed && catId) {
         const cat = expenseCategories.find(c => c.id === catId)
-        if (cat?.subcategories.length > 0) setZoomedCatId(catId)
-      } else if (isSubNode && subId) {
+        if (cat && cat.subcategories.length > 0) setZoomedCatId(catId)
+      } else if (isZoomed && subId) {
         setSelectedSubId(prev => prev === subId ? null : subId)
       }
     }
 
     return (
-      <g onClick={handleClick} style={{ cursor: isCatNode || isSubNode ? 'pointer' : 'default' }}>
+      <g onClick={handleClick} style={{ cursor: 'pointer' }}>
         <rect
           x={x + 1} y={y + 1}
           width={Math.max(0, width - 2)} height={Math.max(0, height - 2)}
-          fill={color}
-          fillOpacity={isCatNode ? 0.58 : 0.88}
-          rx={3}
+          fill={color} fillOpacity={0.88} rx={3}
         />
         {isHighlighted && (
           <rect
@@ -1105,9 +1096,22 @@ function SubcategoriesView({ categories, allTransactions, budgets, isDark }) {
     { key: 'txnCount', label: 'Txns', align: 'right' },
   ]
 
+  // Breadcrumb title for the treemap card
+  const treemapTitle = zoomedCatId ? (
+    <span className="flex items-center gap-1.5">
+      <button
+        onClick={() => setZoomedCatId(null)}
+        className="font-semibold text-indigo-600 dark:text-indigo-400 hover:underline">
+        All Categories
+      </button>
+      <ChevronRight size={13} className="text-slate-400 flex-shrink-0" />
+      <span style={{ color: zoomedCat?.color }}>{zoomedCat?.name}</span>
+    </span>
+  ) : 'Spending Treemap'
+
   return (
     <div className="space-y-5">
-      {/* Filters row */}
+      {/* Global filters — range and actual/planned toggle only; affect both treemap and table */}
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Range</span>
         <div className="flex items-center gap-2">
@@ -1125,29 +1129,15 @@ function SubcategoriesView({ categories, allTransactions, budgets, isDark }) {
           <ToggleButton label="Actual" active={viewMode === 'actual'} onClick={() => setViewMode('actual')} />
           <ToggleButton label="Planned" active={viewMode === 'planned'} onClick={() => setViewMode('planned')} />
         </div>
-        <select value={catFilter} onChange={e => setCatFilter(e.target.value)}
-          className="text-sm border border-slate-200 dark:border-slate-600 rounded-lg px-2.5 py-1.5 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400">
-          <option value="all">All categories</option>
-          {expenseCategories.map(cat => <option key={cat.id} value={cat.id}>{cat.name}</option>)}
-        </select>
       </div>
 
-      {/* Treemap */}
+      {/* Treemap — always shows all categories, unaffected by table filter */}
       <SectionCard
-        title={zoomedCatId ? `${zoomedCat?.name} — Subcategories` : 'Spending Treemap'}
+        title={treemapTitle}
         subtitle={
           zoomedCatId
-            ? 'Click a block to view its 12-month trend'
-            : `${viewMode === 'actual' ? 'Actual spending' : 'Planned amounts'} by subcategory. Click a category to zoom in.`
-        }
-        action={
-          zoomedCatId ? (
-            <button
-              onClick={() => setZoomedCatId(null)}
-              className="flex items-center gap-1 text-xs text-indigo-600 dark:text-indigo-400 font-medium hover:underline">
-              <X size={12} /> All categories
-            </button>
-          ) : null
+            ? 'Click a subcategory block to view its 12-month trend below'
+            : `${viewMode === 'actual' ? 'Actual spending' : 'Planned amounts'} by category — click any block to drill into its subcategories`
         }
       >
         {treemapData.length === 0 ? (
@@ -1159,6 +1149,7 @@ function SubcategoriesView({ categories, allTransactions, budgets, isDark }) {
                 data={treemapData}
                 dataKey="size"
                 aspectRatio={16 / 9}
+                isAnimationActive
                 content={renderTreemapCell}
               />
             </ResponsiveContainer>
@@ -1166,7 +1157,7 @@ function SubcategoriesView({ categories, allTransactions, budgets, isDark }) {
         )}
       </SectionCard>
 
-      {/* Breakdown table */}
+      {/* Breakdown table — has its own independent category filter */}
       <SectionCard
         title="Subcategory Breakdown"
         subtitle="Click a row to see its 12-month trend. Sort by any column."
@@ -1182,6 +1173,16 @@ function SubcategoriesView({ categories, allTransactions, budgets, isDark }) {
           </div>
         }
       >
+        {/* Table-only category filter */}
+        <div className="flex items-center gap-2 mb-4">
+          <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex-shrink-0">Filter by Category</span>
+          <select value={catFilter} onChange={e => setCatFilter(e.target.value)}
+            className="text-xs border border-slate-200 dark:border-slate-600 rounded-lg px-2.5 py-1.5 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+            <option value="all">All categories</option>
+            {expenseCategories.map(cat => <option key={cat.id} value={cat.id}>{cat.name}</option>)}
+          </select>
+        </div>
+
         {tableRows.length === 0 ? (
           <EmptyChart message="No subcategory data for this period." />
         ) : (
