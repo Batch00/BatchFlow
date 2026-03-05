@@ -20,7 +20,9 @@ A personal zero-based budgeting web app. Plan income and expenses by category, l
 - **Quick transaction entry** - floating action button on the Dashboard and Transactions pages opens the transaction form without navigating away
 - **Category management** - add, rename (inline double-click), reorder (arrow buttons), and delete income and expense categories
 - **Subcategory management** - add, rename (inline double-click), drag-and-drop reorder, and delete; renaming from the Budget page syncs everywhere
-- **Analytics** - rich multi-tab analytics page with spending breakdowns, trend charts, budget efficiency scoring, and activity metrics (see Analytics section below)
+- **Analytics** - four-tab analytics page with spending breakdowns, subcategory treemap, trend charts, budget efficiency scoring, and activity metrics (see Analytics section below)
+- **Persistent filter state** - all analytics filters survive page navigation and are only cleared when the user explicitly clicks Reset Filters; a Reset Filters button appears automatically whenever any filter is non-default
+- **Dynamic default date range** - date range defaults are always calculated as 12 months back from the currently selected month, not hardcoded to today
 - **Real-time updates** - Supabase real-time subscriptions keep all open tabs in sync when transactions are added, updated, or deleted
 - **Dark mode** - defaults to dark; toggle to light in Settings; preference persisted in localStorage and applied before React mounts (no flash)
 - **Settings** - install prompt for PWA, account info, preferences (currency, week start, default page), JSON data export and import for full backup and restore
@@ -31,7 +33,7 @@ A personal zero-based budgeting web app. Plan income and expenses by category, l
 
 ## Analytics
 
-The Analytics page is organized into three tabs.
+The Analytics page is organized into four tabs. All charts use confirmed-only transactions. Filter state (date ranges, toggles, category filters) persists across page navigation and resets only on explicit user action; the Reset Filters button appears only when at least one filter is non-default.
 
 ### This Month
 
@@ -47,6 +49,13 @@ The Analytics page is organized into three tabs.
 - **Savings Rate bar chart** - monthly savings rate as a percentage of income; bars are color-coded green (positive) or red (negative)
 - **Per-category spending line chart** - one line per expense category over the selected range; toggle individual categories on and off using the chip list below the chart
 - **Monthly summary table** - month-by-month breakdown of income, expenses, savings, and savings rate in a scrollable table
+
+### Subcategories
+
+- **Date range and view mode filters** - select any multi-month window up to 24 months; toggle between Actual spending and Planned amounts; these filters apply to both the treemap and the breakdown table
+- **Spending treemap** - flat category blocks sized by total spending; click any category block to zoom in and see its subcategories as individual blocks with a breadcrumb showing the drill path (e.g. All Categories → Housing); click a subcategory block to open its trend panel
+- **Subcategory breakdown table** - every subcategory with Planned, Actual, Remaining (red if over budget), % of total spending, and transaction count columns; sortable by any column; searchable by name; has its own independent category filter that does not affect the treemap
+- **12-month trend panel** - clicking any row or treemap subcategory block expands a line chart showing that subcategory's actual vs. planned spending over the last 12 months, useful for tracking recurring items like loan payments or contributions
 
 ### Activity
 
@@ -151,7 +160,7 @@ src/
     ├── Dashboard.jsx         # Category cards, recent activity, FAB
     ├── Budget.jsx            # Inline budget planning with inline rename
     ├── Transactions.jsx      # Transaction list with split-row display, FAB
-    ├── Analytics.jsx         # Three-tab analytics: This Month, Trends, Activity
+    ├── Analytics.jsx         # Four-tab analytics: This Month, Trends, Subcategories, Activity
     ├── Calendar.jsx          # Monthly income and cash flow calendar
     ├── Categories.jsx        # Category and subcategory management
     └── Settings.jsx          # Install prompt, account, preferences, data tools

@@ -46,7 +46,7 @@ src/
     ├── Dashboard.jsx         # Category cards, recent activity, FAB
     ├── Budget.jsx            # Inline budget planning + inline rename
     ├── Transactions.jsx      # Transaction list with split-row display, FAB
-    ├── Analytics.jsx         # Three-tab analytics: This Month, Trends, Activity
+    ├── Analytics.jsx         # Four-tab analytics: This Month, Trends, Subcategories, Activity
     ├── Calendar.jsx          # Monthly income and cash flow calendar
     ├── Categories.jsx        # Category + subcategory management
     └── Settings.jsx          # Install prompt, account, preferences, data export/import
@@ -78,7 +78,9 @@ src/
 
 **Calendar** - `Calendar.jsx` shows all income for the month: recurring instances (`t.recurringRuleId !== null`) and confirmed one-time income (`!t.isPending`). Cash flow projects running daily balance using this same income set plus all confirmed expense transactions.
 
-**Analytics** - three-tab layout (This Month / Trends / Activity). All charts use confirmed-only transactions (`!t.isPending`). This Month tab: donut with Actual/Planned toggle and $ vs % toggle; Planned vs Actual bar with subcategory drill-down on click; Budget Efficiency Score with SVG gauge. Trends tab: date range selector, income vs expenses line, savings rate bar, per-category line with toggleable category chips, monthly summary table. Activity tab: transaction volume bar, day-of-week frequency bar, average transaction size by category.
+**Analytics** - four-tab layout (This Month / Trends / Subcategories / Activity). All charts use confirmed-only transactions (`!t.isPending`). This Month tab: donut with Actual/Planned toggle and $ vs % toggle; Planned vs Actual bar with subcategory drill-down on click; Budget Efficiency Score with SVG gauge. Trends tab: date range selector, income vs expenses line, savings rate bar, per-category line with toggleable category chips, monthly summary table. Subcategories tab: spending treemap (flat category blocks; click to zoom into subcategories with breadcrumb back-navigation), sortable breakdown table with planned/actual/remaining/% of total/txn count columns and independent category filter, 12-month trend line for any selected subcategory. Activity tab: transaction volume bar, day-of-week frequency bar, average transaction size by category.
+
+**Filter persistence** - all Analytics filter and slicer state (tab, date ranges, toggles, category filters, sort state) is persisted in `batchflow:analyticsFilters` in localStorage and lifted to the `Analytics` root component. State survives page navigation and is never reset by tab switches. A Reset Filters button appears only when any filter differs from its default. On reset, default date ranges are always computed as 12 months back from `currentMonth` (not hardcoded to today). `zoomedCatId` and `selectedSubId` in SubcategoriesView are intentionally local (ephemeral drill-down UI, not persisted).
 
 **Split transactions** - `categoryId: null` on the top-level object signals a split; `splits[]` holds `{ categoryId, subcategoryId, amount }`. Any count or filter query must check `t.splits ? t.splits.some(...) : t.categoryId === ...`.
 
