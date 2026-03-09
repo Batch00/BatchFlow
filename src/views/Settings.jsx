@@ -2,10 +2,11 @@ import { useState, useEffect, useRef } from 'react'
 import {
   Download, Upload, AlertTriangle, Smartphone,
   Mail, Lock, Trash2, CheckCircle, Info,
-  Sun, Moon,
+  Sun, Moon, UserPlus, Users, Shield,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
+import { supabase } from '../lib/supabase'
 import { loadData, saveData } from '../utils/storage'
 import { formatMonthLabel } from '../utils/formatters'
 
@@ -251,6 +252,64 @@ export default function Settings() {
     setTimeout(() => setClearDone(false), 3000)
   }
 
+  // ── Admin Access Control ──────────────────────────────────────────────────────
+
+  const adminEmail = import.meta.env.VITE_ADMIN_EMAIL
+  const isAdmin = user?.email === adminEmail
+
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteStatus, setInviteStatus] = useState(null) // null | 'loading' | 'sent' | 'error'
+  const [inviteError, setInviteError] = useState('')
+  const [lastInvitedEmail, setLastInvitedEmail] = useState('')
+
+  const [invitedUsers, setInvitedUsers] = useState([])
+  const [usersLoading, setUsersLoading] = useState(false)
+  const [revokeConfirmId, setRevokeConfirmId] = useState(null)
+  const [revokingId, setRevokingId] = useState(null)
+
+  useEffect(() => {
+    if (!isAdmin) return
+    loadInvitedUsers()
+  }, [isAdmin])
+
+  async function loadInvitedUsers() {
+    setUsersLoading(true)
+    const { data, error } = await supabase.functions.invoke('admin-list-users')
+    if (!error && data?.users) setInvitedUsers(data.users)
+    setUsersLoading(false)
+  }
+
+  async function handleInvite(e) {
+    e.preventDefault()
+    if (!inviteEmail.trim()) return
+    setInviteStatus('loading')
+    setInviteError('')
+    const { data, error } = await supabase.functions.invoke('admin-invite', {
+      body: { email: inviteEmail.trim() },
+    })
+    if (error || data?.error) {
+      setInviteStatus('error')
+      setInviteError(data?.error || error?.message || 'Failed to send invite.')
+    } else {
+      setLastInvitedEmail(inviteEmail.trim())
+      setInviteStatus('sent')
+      setInviteEmail('')
+      await loadInvitedUsers()
+    }
+  }
+
+  async function handleRevoke(userId) {
+    setRevokingId(userId)
+    const { data, error } = await supabase.functions.invoke('admin-revoke', {
+      body: { userId },
+    })
+    if (!error && !data?.error) {
+      setInvitedUsers(prev => prev.filter(u => u.id !== userId))
+    }
+    setRevokingId(null)
+    setRevokeConfirmId(null)
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
@@ -438,6 +497,102 @@ export default function Settings() {
 
         </div>
       </section>
+
+      {/* ── Access Control (admin only) ──────────────────────────────── */}
+      {isAdmin && (
+        <section>
+          <h2 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+            <Shield size={11} />
+            Access Control
+          </h2>
+          <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-700">
+
+            {/* Invite */}
+            <div className="p-6">
+              <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100 mb-3 flex items-center gap-2">
+                <UserPlus size={14} className="text-slate-400" />
+                Invite User
+              </h3>
+              <form onSubmit={handleInvite} className="flex gap-2">
+                <input
+                  type="email"
+                  value={inviteEmail}
+                  onChange={e => { setInviteEmail(e.target.value); setInviteStatus(null) }}
+                  placeholder="user@example.com"
+                  className="flex-1 min-w-0 text-sm px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
+                />
+                <button
+                  type="submit"
+                  disabled={!inviteEmail.trim() || inviteStatus === 'loading'}
+                  className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+                >
+                  {inviteStatus === 'loading' ? 'Sending…' : 'Send Invite'}
+                </button>
+              </form>
+              {inviteStatus === 'sent' && (
+                <p className="mt-2 text-sm text-emerald-600 flex items-center gap-1.5">
+                  <CheckCircle size={14} /> Invite sent to {lastInvitedEmail}.
+                </p>
+              )}
+              {inviteStatus === 'error' && (
+                <p className="mt-2 text-sm text-red-600">{inviteError}</p>
+              )}
+            </div>
+
+            {/* User list */}
+            <div className="p-6">
+              <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100 mb-3 flex items-center gap-2">
+                <Users size={14} className="text-slate-400" />
+                Invited Users
+              </h3>
+              {usersLoading ? (
+                <p className="text-sm text-slate-400">Loading…</p>
+              ) : invitedUsers.length === 0 ? (
+                <p className="text-sm text-slate-400">No invited users yet.</p>
+              ) : (
+                <ul className="space-y-1">
+                  {invitedUsers.map(u => (
+                    <li key={u.id} className="flex items-center justify-between gap-3 py-2.5 border-b border-slate-100 dark:border-slate-700 last:border-0">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">{u.email}</p>
+                        <p className="text-xs text-slate-400">
+                          {u.confirmed_at ? 'Active' : 'Pending invitation'}
+                          {u.last_sign_in_at && ` · Last seen ${new Date(u.last_sign_in_at).toLocaleDateString()}`}
+                        </p>
+                      </div>
+                      {revokeConfirmId === u.id ? (
+                        <div className="flex gap-1.5 shrink-0">
+                          <button
+                            onClick={() => handleRevoke(u.id)}
+                            disabled={revokingId === u.id}
+                            className="px-3 py-1.5 bg-red-600 text-white text-xs font-medium rounded-lg hover:bg-red-700 disabled:opacity-60 transition-colors"
+                          >
+                            {revokingId === u.id ? '…' : 'Confirm'}
+                          </button>
+                          <button
+                            onClick={() => setRevokeConfirmId(null)}
+                            className="px-3 py-1.5 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setRevokeConfirmId(u.id)}
+                          className="px-3 py-1.5 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-400 text-xs font-medium rounded-lg border border-red-200 dark:border-red-800 hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors shrink-0"
+                        >
+                          Revoke
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+          </div>
+        </section>
+      )}
 
       {/* ── Preferences ──────────────────────────────────────────────── */}
       <section>
