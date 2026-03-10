@@ -1,4 +1,4 @@
-# BatchFlow v1.2.0 - Claude Instructions
+# BatchFlow v1.3.0 - Claude Instructions
 *Own your flow. Personal zero-based budgeting app backed by Supabase, deployed on Vercel.*
 
 ## Tech Stack
@@ -6,7 +6,7 @@
 - **Tailwind CSS v4** - via `@tailwindcss/vite`; no `tailwind.config.js`
 - **Vite** - build tool and dev server
 - **vite-plugin-pwa** - PWA manifest, service worker, Workbox caching
-- **Supabase** - Postgres database, email/password auth, row-level security, real-time subscriptions
+- **Supabase** - Postgres database, email/password auth, row-level security, real-time subscriptions, Edge Functions
 - **Vercel** - hosting; auto-deploys on every push to `main`
 - **Recharts** - analytics charts
 - **@dnd-kit** - drag-and-drop subcategory reordering
@@ -24,7 +24,7 @@ npm run preview
 src/
 ├── context/
 │   ├── AppContext.jsx       # All app state + Supabase CRUD; useApp() hook
-│   └── AuthContext.jsx      # Supabase auth; useAuth() hook
+│   └── AuthContext.jsx      # Supabase auth; useAuth() hook; invite detection
 ├── lib/
 │   └── supabase.js          # Supabase client (VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY)
 ├── data/
@@ -42,21 +42,34 @@ src/
 │   ├── transactions/        # TransactionModal
 │   └── UpdateNotifier.jsx   # SW registration + "updated" toast
 └── views/
-    ├── Auth.jsx              # Sign in / sign up
+    ├── Auth.jsx              # Sign in only (no public signup)
+    ├── SetPassword.jsx       # Forced password setup on first invite-link login
     ├── Dashboard.jsx         # Category cards, recent activity, FAB
     ├── Budget.jsx            # Inline budget planning + inline rename
     ├── Transactions.jsx      # Transaction list with split-row display, FAB
     ├── Analytics.jsx         # Four-tab analytics: This Month, Trends, Subcategories, Activity
     ├── Calendar.jsx          # Monthly income and cash flow calendar
     ├── Categories.jsx        # Category + subcategory management
-    └── Settings.jsx          # Install prompt, account, preferences, data export/import
+    └── Settings.jsx          # Install prompt, account, preferences, data export/import, admin invite panel
+
+supabase/
+└── functions/
+    ├── admin-invite/         # Edge Function: invite user by email (service role)
+    ├── admin-list-users/     # Edge Function: list non-admin users
+    └── admin-revoke/         # Edge Function: delete a user account
 ```
 
 ## Architecture
 
 **`AppContext.jsx`** - single source of truth: `categories`, `transactions`, `budgets`, `currentMonth`. All CRUD talks directly to Supabase. `currentMonth` is persisted to localStorage; all other state comes from Supabase.
 
-**`AuthContext.jsx`** - wraps Supabase auth; exposes `user`, `loading`, `signIn`, `signUp`, `signOut`.
+**`AuthContext.jsx`** - wraps Supabase auth; exposes `user`, `loading`, `needsPasswordSetup`, `clearNeedsPasswordSetup`, `signIn`, `signOut`, `updateEmail`, `updatePassword`. No `signUp` - account creation is invite-only. On mount, reads the URL hash before calling `getSession()`; if `type=invite` is present and a session exists, sets `needsPasswordSetup: true` and strips the hash from the URL.
+
+**Invite-only access** - open signup is disabled in the Supabase dashboard. New users are created exclusively via `supabase.auth.admin.inviteUserByEmail()` called from the `admin-invite` Edge Function, which is triggered from the admin invite panel in Settings. The admin account is identified by the `VITE_ADMIN_EMAIL` environment variable. The admin invite panel (invite form, user list, revoke button) is only rendered when `user.email === import.meta.env.VITE_ADMIN_EMAIL`.
+
+**Invite flow** - user clicks invite link, lands on app with `type=invite` in URL hash, Supabase session is established automatically, `needsPasswordSetup` is set to `true`, `SetPassword.jsx` is shown instead of the app. After the user sets a password, `clearNeedsPasswordSetup()` is called and the app loads normally.
+
+**Edge Functions** (`supabase/functions/`) - all three functions run on Deno, always return HTTP 200 with a JSON body (`{ error: string }` or the success payload), include a top-level try/catch, and verify the caller JWT using `adminClient.auth.getUser(token)` before checking the admin email. `verify_jwt = false` is set in `supabase/config.toml` so the Supabase gateway does not reject requests before function code runs. Deploy with `supabase functions deploy admin-invite admin-list-users admin-revoke`.
 
 **`budgetUtils.js`** - pure functions for spending totals and progress. `getCategorySpent` / `getSubcategorySpent` handle both flat and split transactions. `getProgressStatus(spent, planned, type)` accepts `'income'|'expense'`; yellow threshold is 50% for both. Expense: green -> yellow (50%) -> red (strictly over). Income: neutral -> yellow (50%) -> green (100%).
 
@@ -64,7 +77,9 @@ src/
 
 **Budget writes** use optimistic updates - local state updates immediately, Supabase write is background. Budget plans use DELETE + INSERT (not upsert) to avoid partial unique-index conflicts.
 
-**Routing** - `App.jsx` -> nested under `<Layout />` -> Dashboard / Budget / Transactions / Analytics / Calendar / Categories / Settings. Auth is a standalone route outside Layout.
+**Default category seeding** - `seedDefaults()` in AppContext runs only when `catRows.length === 0` after `loadAll()`. It performs a fresh count query against the database before inserting to prevent duplicate seeding if `loadAll()` is called twice concurrently (which can happen during the invite redirect).
+
+**Routing** - `App.jsx` -> if `user && needsPasswordSetup` shows `SetPassword`; if `user` shows `AppRoutes` (nested under `<Layout />`); otherwise shows `Auth`. Routes: Dashboard / Budget / Transactions / Analytics / Calendar / Categories / Settings.
 
 **PWA** - configured via `vite-plugin-pwa` in `vite.config.js`. `injectRegister: null` - registration is handled entirely by `UpdateNotifier.jsx` so the app controls the reload/toast sequence. `skipWaiting` and `clientsClaim` are both enabled; `cleanupOutdatedCaches` removes stale caches on every update. `UpdateNotifier.jsx` also calls `registration.update()` on `visibilitychange` (iOS re-open) and on an hourly interval for long-running desktop sessions.
 

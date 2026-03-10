@@ -1,7 +1,24 @@
-# BatchFlow v1.2.0
+# BatchFlow v1.3.0
 *Own your flow*
 
 A personal zero-based budgeting web app. Plan income and expenses by category, log transactions, and track spending in real time. Backed by Supabase with per-user auth and deployed on Vercel. Installable as a PWA on iOS and Android.
+
+---
+
+## What's new in v1.3.0
+
+**Access control**
+- Invite-only mode: open signup is disabled; new accounts are created only via email invite sent by the admin from the Settings page
+- Admin invite panel in Settings: invite users by email, view all invited accounts with their status (pending or active), and revoke access with a confirmation step
+- Password setup screen: users arriving from an invite link are required to set a password before they can access the app
+
+**Bug fixes**
+- Default categories no longer appear doubled for newly invited users; a database-level count check prevents the seeding function from running more than once per account
+- Recurring transaction merchant names now sync correctly across all months including past confirmed transactions
+- The copy-budget empty state displays correctly for future months on both the Budget page and Dashboard
+- Pending transactions are excluded from analytics charts consistently across all four tabs
+- Over-budget detection enforces a strict 0.01 threshold everywhere; amounts at exactly the budget always show as on-budget
+- PWA cache clears faster on new deployments for quicker updates across all devices
 
 ---
 
@@ -25,9 +42,9 @@ A personal zero-based budgeting web app. Plan income and expenses by category, l
 - **Dynamic default date range** - date range defaults are always calculated as 12 months back from the currently selected month, not hardcoded to today
 - **Real-time updates** - Supabase real-time subscriptions keep all open tabs in sync when transactions are added, updated, or deleted
 - **Dark mode** - defaults to dark; toggle to light in Settings; preference persisted in localStorage and applied before React mounts (no flash)
-- **Settings** - install prompt for PWA, account info, preferences (currency, week start, default page), JSON data export and import for full backup and restore
+- **Settings** - install prompt for PWA, account info, preferences (currency, week start, default page), JSON data export and import for full backup and restore, and admin invite management for the admin account
 - **PWA** - installable on iOS and Android directly from the browser; app shell and static assets are cached for offline use; Supabase API calls use a network-first strategy; the app automatically applies updates in the background and shows a confirmation toast when a new version is live
-- **Multi-user auth** - email/password sign in and sign up via Supabase; every user's data is isolated at the database level via Postgres row-level security
+- **Invite-only auth** - new accounts are created exclusively via admin email invite sent from the Settings page; invited users set their password on first login; every user's data is isolated at the database level via Postgres row-level security
 
 ---
 
@@ -53,7 +70,7 @@ The Analytics page is organized into four tabs. All charts use confirmed-only tr
 ### Subcategories
 
 - **Date range and view mode filters** - select any multi-month window up to 24 months; toggle between Actual spending and Planned amounts; these filters apply to both the treemap and the breakdown table
-- **Spending treemap** - flat category blocks sized by total spending; click any category block to zoom in and see its subcategories as individual blocks with a breadcrumb showing the drill path (e.g. All Categories → Housing); click a subcategory block to open its trend panel
+- **Spending treemap** - flat category blocks sized by total spending; click any category block to zoom in and see its subcategories as individual blocks with a breadcrumb showing the drill path (e.g. All Categories > Housing); click a subcategory block to open its trend panel
 - **Subcategory breakdown table** - every subcategory with Planned, Actual, Remaining (red if over budget), % of total spending, and transaction count columns; sortable by any column; searchable by name; has its own independent category filter that does not affect the treemap
 - **12-month trend panel** - clicking any row or treemap subcategory block expands a line chart showing that subcategory's actual vs. planned spending over the last 12 months, useful for tracking recurring items like loan payments or contributions
 
@@ -73,7 +90,7 @@ The Analytics page is organized into four tabs. All charts use confirmed-only tr
 | [Tailwind CSS v4](https://tailwindcss.com/) | Utility-first styling via the `@tailwindcss/vite` plugin; no `tailwind.config.js` needed |
 | [Vite](https://vitejs.dev/) | Build tool and local dev server |
 | [vite-plugin-pwa](https://vite-pwa-org.netlify.app/) | PWA manifest, service worker generation, and Workbox caching config |
-| [Supabase](https://supabase.com/) | Postgres database, email/password authentication, row-level security, and real-time subscriptions |
+| [Supabase](https://supabase.com/) | Postgres database, email/password authentication, row-level security, real-time subscriptions, and Edge Functions |
 | [Vercel](https://vercel.com/) | Hosting - every push to `main` triggers an automatic production deployment |
 | [Recharts](https://recharts.org/) | Charts in the Analytics view |
 | [React Router v6](https://reactrouter.com/) | Client-side routing |
@@ -99,9 +116,10 @@ Create a `.env` file in the project root:
 ```
 VITE_SUPABASE_URL=your_supabase_project_url
 VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+VITE_ADMIN_EMAIL=your_admin_email_address
 ```
 
-Both values are in your Supabase project under **Settings -> API**.
+`VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are in your Supabase project under **Settings -> API**. `VITE_ADMIN_EMAIL` is the email address of the account that has access to the admin invite panel in Settings.
 
 ### 3. Start the dev server
 
@@ -125,10 +143,15 @@ Open [http://localhost:5173](http://localhost:5173).
 
 1. Push the repository to GitHub
 2. Import the repo in the [Vercel dashboard](https://vercel.com/new)
-3. Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` under **Settings -> Environment Variables**
+3. Add the following under **Settings -> Environment Variables**:
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_ANON_KEY`
+   - `VITE_ADMIN_EMAIL`
 4. Deploy - Vercel detects Vite automatically; no custom build settings required
 
 Every subsequent push to `main` deploys to production automatically.
+
+The three Supabase Edge Functions (`admin-invite`, `admin-list-users`, `admin-revoke`) are deployed separately via the Supabase CLI and are not part of the Vercel build. See `supabase/functions/` for their source.
 
 ---
 
@@ -138,11 +161,11 @@ Every subsequent push to `main` deploys to production automatically.
 src/
 ├── context/
 │   ├── AppContext.jsx       # Central app state + all Supabase CRUD operations
-│   └── AuthContext.jsx      # Supabase auth state (user, signIn, signUp, signOut)
+│   └── AuthContext.jsx      # Supabase auth state (user, signIn, signOut, invite detection)
 ├── lib/
 │   └── supabase.js          # Supabase client (reads env vars)
 ├── data/
-│   └── defaultCategories.js # Default category set seeded for new users
+│   └── defaultCategories.js # Default category set seeded once for new users
 ├── utils/
 │   ├── budgetUtils.js       # Spending totals, progress %, unbudgeted calculation
 │   ├── formatters.js        # Currency, date, and month key helpers
@@ -156,14 +179,21 @@ src/
 │   ├── transactions/        # TransactionModal
 │   └── UpdateNotifier.jsx   # Service worker registration and update toast
 └── views/
-    ├── Auth.jsx              # Sign in / sign up
+    ├── Auth.jsx              # Sign in (invite-only; no public signup)
+    ├── SetPassword.jsx       # Forced password setup screen shown after invite link
     ├── Dashboard.jsx         # Category cards, recent activity, FAB
     ├── Budget.jsx            # Inline budget planning with inline rename
     ├── Transactions.jsx      # Transaction list with split-row display, FAB
     ├── Analytics.jsx         # Four-tab analytics: This Month, Trends, Subcategories, Activity
     ├── Calendar.jsx          # Monthly income and cash flow calendar
     ├── Categories.jsx        # Category and subcategory management
-    └── Settings.jsx          # Install prompt, account, preferences, data tools
+    └── Settings.jsx          # Install prompt, account, preferences, data tools, admin invite panel
+
+supabase/
+└── functions/
+    ├── admin-invite/         # Edge Function: send invite email via service role key
+    ├── admin-list-users/     # Edge Function: list non-admin users with invite status
+    └── admin-revoke/         # Edge Function: delete a user account
 ```
 
 ---
