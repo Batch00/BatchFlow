@@ -1,0 +1,18 @@
+# Supabase project configuration
+# https://supabase.com/docs/reference/cli/config
+
+project_id = "budget-tool"
+
+# Each function that does its own JWT verification internally must set
+# verify_jwt = false so Supabase's gateway does not reject the request
+# before the function code runs. The functions verify the caller themselves
+# using adminClient.auth.getUser(token).
+
+[functions.admin-invite]
+verify_jwt = false
+
+[functions.admin-list-users]
+verify_jwt = false
+
+[functions.admin-revoke]
+verify_jwt = false
