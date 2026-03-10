@@ -35,12 +35,8 @@ export function AuthProvider({ children }) {
   const signIn = (email, password) =>
     supabase.auth.signInWithPassword({ email, password })
 
-  const signUp = (email, password) =>
-    supabase.auth.signUp({
-      email,
-      password,
-      options: { emailRedirectTo: import.meta.env.VITE_SITE_URL },
-    })
+  // signUp is intentionally absent — account creation is invite-only.
+  // New users are created exclusively via the admin invite flow in Settings.
 
   const signOut = () => supabase.auth.signOut()
 
@@ -56,7 +52,7 @@ export function AuthProvider({ children }) {
     <AuthContext.Provider value={{
       user, loading,
       needsPasswordSetup, clearNeedsPasswordSetup,
-      signIn, signUp, signOut, updateEmail, updatePassword,
+      signIn, signOut, updateEmail, updatePassword,
     }}>
       {children}
     </AuthContext.Provider>

@@ -312,6 +312,16 @@ export function AppProvider({ children }) {
     setLoading(true)
 
     async function seedDefaults() {
+      // Fresh count check right before inserting. This guards against the race
+      // where loadAll() fires twice concurrently (e.g. during the invite redirect
+      // when both getSession() and onAuthStateChange resolve for the same new user)
+      // and both calls see catRows.length === 0 before either finishes inserting.
+      const { count, error: countErr } = await supabase
+        .from('categories')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+      if (countErr || count > 0) return []
+
       // IMPORTANT: do NOT pass `id` here. defaultCategories uses plain string IDs
       // like 'income' and 'housing' which are not valid UUIDs. The DB schema uses
       // `id uuid PRIMARY KEY`, so inserting those strings would fail with:
