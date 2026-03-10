@@ -5,49 +5,61 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-function json(body: unknown, status = 200) {
+function respond(body: unknown): Response {
   return new Response(JSON.stringify(body), {
-    status,
+    status: 200,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   })
 }
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+Deno.serve(async (req: Request): Promise<Response> => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
 
-  // Verify caller JWT
-  const authHeader = req.headers.get('Authorization')
-  if (!authHeader) return json({ error: 'Missing authorization header' })
+  try {
+    // 1. Require a valid Authorization header
+    const authHeader = req.headers.get('Authorization')
+    if (!authHeader) return respond({ error: 'Missing authorization header' })
 
-  const callerClient = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_ANON_KEY')!,
-    { global: { headers: { Authorization: authHeader } } },
-  )
-  const { data: { user: caller } } = await callerClient.auth.getUser()
-  if (!caller) return json({ error: 'Invalid token' })
+    // 2. Require ADMIN_EMAIL secret
+    const adminEmail = Deno.env.get('ADMIN_EMAIL')
+    if (!adminEmail) return respond({ error: 'ADMIN_EMAIL secret is not configured on this function' })
 
-  // Check admin
-  const adminEmail = Deno.env.get('ADMIN_EMAIL')
-  if (!adminEmail || caller.email !== adminEmail) return json({ error: 'Forbidden' })
+    // 3. Require SUPABASE_SERVICE_ROLE_KEY
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    if (!serviceRoleKey) return respond({ error: 'SUPABASE_SERVICE_ROLE_KEY is not available in the function environment' })
 
-  // List users via service role client (excludes admin from results)
-  const admin = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-  )
-  const { data, error } = await admin.auth.admin.listUsers({ perPage: 1000 })
-  if (error) return json({ error: error.message })
+    // 4. Build admin client with service role key (not the anon key)
+    const adminClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      serviceRoleKey,
+      { auth: { autoRefreshToken: false, persistSession: false } },
+    )
 
-  const users = data.users
-    .filter(u => u.email !== adminEmail)
-    .map(u => ({
-      id: u.id,
-      email: u.email,
-      confirmed_at: u.confirmed_at ?? null,
-      last_sign_in_at: u.last_sign_in_at ?? null,
-      invited_at: u.invited_at ?? null,
-    }))
+    // 5. Verify the caller's JWT and check they are the admin
+    const token = authHeader.replace('Bearer ', '')
+    const { data: { user: caller }, error: userError } = await adminClient.auth.getUser(token)
+    if (userError || !caller) return respond({ error: 'Invalid or expired session' })
+    if (caller.email !== adminEmail) return respond({ error: 'Forbidden' })
 
-  return json({ users })
+    // 6. List all users, filter out the admin account itself
+    const { data, error } = await adminClient.auth.admin.listUsers({ perPage: 1000 })
+    if (error) return respond({ error: error.message })
+
+    const users = data.users
+      .filter((u) => u.email !== adminEmail)
+      .map((u) => ({
+        id: u.id,
+        email: u.email ?? '',
+        confirmed_at: u.confirmed_at ?? null,
+        last_sign_in_at: u.last_sign_in_at ?? null,
+        invited_at: u.invited_at ?? null,
+      }))
+
+    return respond({ users })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Internal server error'
+    return respond({ error: message })
+  }
 })

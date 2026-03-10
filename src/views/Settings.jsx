@@ -264,6 +264,7 @@ export default function Settings() {
 
   const [invitedUsers, setInvitedUsers] = useState([])
   const [usersLoading, setUsersLoading] = useState(false)
+  const [usersError, setUsersError] = useState('')
   const [revokeConfirmId, setRevokeConfirmId] = useState(null)
   const [revokingId, setRevokingId] = useState(null)
 
@@ -274,8 +275,15 @@ export default function Settings() {
 
   async function loadInvitedUsers() {
     setUsersLoading(true)
+    setUsersError('')
     const { data, error } = await supabase.functions.invoke('admin-list-users')
-    if (!error && data?.users) setInvitedUsers(data.users)
+    if (error) {
+      setUsersError('Could not reach admin-list-users function. Make sure it is deployed and the ADMIN_EMAIL secret is set.')
+    } else if (data?.error) {
+      setUsersError(data.error)
+    } else if (data?.users) {
+      setInvitedUsers(data.users)
+    }
     setUsersLoading(false)
   }
 
@@ -287,9 +295,12 @@ export default function Settings() {
     const { data, error } = await supabase.functions.invoke('admin-invite', {
       body: { email: inviteEmail.trim() },
     })
-    if (error || data?.error) {
+    if (error) {
       setInviteStatus('error')
-      setInviteError(data?.error || error?.message || 'Failed to send invite.')
+      setInviteError('Could not reach admin-invite function. Make sure it is deployed and the ADMIN_EMAIL secret is set.')
+    } else if (data?.error) {
+      setInviteStatus('error')
+      setInviteError(data.error)
     } else {
       setLastInvitedEmail(inviteEmail.trim())
       setInviteStatus('sent')
@@ -547,6 +558,8 @@ export default function Settings() {
               </h3>
               {usersLoading ? (
                 <p className="text-sm text-slate-400">Loading…</p>
+              ) : usersError ? (
+                <p className="text-sm text-red-600">{usersError}</p>
               ) : invitedUsers.length === 0 ? (
                 <p className="text-sm text-slate-400">No invited users yet.</p>
               ) : (
