@@ -7,11 +7,20 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   // Start as true so the app doesn't flash the login page on load
   const [loading, setLoading] = useState(true)
+  const [needsPasswordSetup, setNeedsPasswordSetup] = useState(false)
 
   useEffect(() => {
-    // Restore session from localStorage (Supabase persists it automatically)
+    // Read the hash BEFORE calling getSession() — supabase-js doesn't clear it
+    // automatically, but we want to capture it before any navigation removes it.
+    const isInviteLink = window.location.hash.includes('type=invite')
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null)
+      if (session && isInviteLink) {
+        setNeedsPasswordSetup(true)
+        // Strip the token hash from the URL so a hard refresh doesn't re-trigger this
+        window.history.replaceState(null, '', window.location.pathname + window.location.search)
+      }
       setLoading(false)
     })
 
@@ -41,8 +50,14 @@ export function AuthProvider({ children }) {
   const updatePassword = (newPassword) =>
     supabase.auth.updateUser({ password: newPassword })
 
+  const clearNeedsPasswordSetup = () => setNeedsPasswordSetup(false)
+
   return (
-    <AuthContext.Provider value={{ user, loading, signIn, signUp, signOut, updateEmail, updatePassword }}>
+    <AuthContext.Provider value={{
+      user, loading,
+      needsPasswordSetup, clearNeedsPasswordSetup,
+      signIn, signUp, signOut, updateEmail, updatePassword,
+    }}>
       {children}
     </AuthContext.Provider>
   )

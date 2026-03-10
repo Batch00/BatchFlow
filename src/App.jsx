@@ -12,6 +12,7 @@ import Recurring from './views/Recurring'
 import Calendar from './views/Calendar'
 import Settings from './views/Settings'
 import Auth from './views/Auth'
+import SetPassword from './views/SetPassword'
 import UpdateNotifier from './components/UpdateNotifier'
 
 // Reads the user's defaultPage preference and redirects away from '/' if set.
@@ -50,7 +51,7 @@ function AppRoutes() {
 }
 
 export default function App() {
-  const { user, loading: authLoading } = useAuth()
+  const { user, loading: authLoading, needsPasswordSetup } = useAuth()
 
   // Hold render until Supabase has restored the session from localStorage.
   // This prevents a flash of the login page on every refresh.
@@ -59,7 +60,12 @@ export default function App() {
   return (
     <>
       <UpdateNotifier />
-      {user ? <AppRoutes /> : <Auth />}
+      {user && needsPasswordSetup
+        ? <SetPassword />
+        : user
+          ? <AppRoutes />
+          : <Auth />
+      }
     </>
   )
 }
