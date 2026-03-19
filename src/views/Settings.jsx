@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import {
   Download, Upload, AlertTriangle, Smartphone,
   Mail, Lock, Trash2, CheckCircle, Info,
-  Sun, Moon, UserPlus, Users, Shield,
+  Sun, Moon, UserPlus, Users, Shield, RotateCcw,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
@@ -60,13 +60,34 @@ function isValidBackup(data) {
   )
 }
 
+function DemoLock({ children, active }) {
+  const [tip, setTip] = useState(false)
+  if (!active) return children
+  return (
+    <div
+      className="relative"
+      onMouseEnter={() => setTip(true)}
+      onMouseLeave={() => setTip(false)}
+    >
+      <div className="opacity-50 pointer-events-none select-none">{children}</div>
+      {tip && (
+        <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+          <div className="bg-slate-800 dark:bg-slate-700 text-white text-xs rounded-lg px-3 py-2 shadow-lg">
+            Not available in demo mode
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Settings() {
   const {
     categories, transactions, budgets, currentMonth,
     importAllData, clearMonthData, clearAllData,
     theme, setTheme,
   } = useApp()
-  const { user, updateEmail, updatePassword, signOut } = useAuth()
+  const { user, updateEmail, updatePassword, signOut, isDemoMode } = useAuth()
 
   // ── Install App ─────────────────────────────────────────────────────────────
 
@@ -120,6 +141,7 @@ export default function Settings() {
 
   async function handleEmailChange(e) {
     e.preventDefault()
+    if (isDemoMode) return
     if (!emailNew.trim()) return
     setEmailStatus('loading')
     setEmailError('')
@@ -130,6 +152,7 @@ export default function Settings() {
 
   async function handlePasswordChange(e) {
     e.preventDefault()
+    if (isDemoMode) return
     if (!passNew) return
     if (passNew !== passConfirm) {
       setPassStatus('error')
@@ -149,7 +172,7 @@ export default function Settings() {
   }
 
   async function handleDeleteAccount() {
-    if (deleteInput !== 'DELETE') return
+    if (isDemoMode || deleteInput !== 'DELETE') return
     setDeleteLoading(true)
     await clearAllData()
     await signOut()
@@ -166,6 +189,7 @@ export default function Settings() {
   }
 
   function handleSavePrefs() {
+    if (isDemoMode) return
     saveData('preferences', prefs)
     setPrefsSaved(true)
     setTimeout(() => setPrefsSaved(false), 2500)
@@ -203,6 +227,7 @@ export default function Settings() {
   }
 
   function handleFileChange(e) {
+    if (isDemoMode) return
     const file = e.target.files[0]
     if (!file) return
     const reader = new FileReader()
@@ -233,6 +258,7 @@ export default function Settings() {
   }
 
   async function handleConfirmImport() {
+    if (isDemoMode) return
     setImporting(true)
     await importAllData(importState.data)
     // importAllData calls window.location.reload() on completion
@@ -244,6 +270,7 @@ export default function Settings() {
   }
 
   async function handleClearMonth() {
+    if (isDemoMode) return
     setClearLoading(true)
     await clearMonthData(clearMonthKey)
     setClearLoading(false)
@@ -306,6 +333,25 @@ export default function Settings() {
       setInviteStatus('sent')
       setInviteEmail('')
       await loadInvitedUsers()
+    }
+  }
+
+  const [demoResetStatus, setDemoResetStatus] = useState(null) // null | 'loading' | 'done' | 'error'
+  const [demoResetError, setDemoResetError] = useState('')
+
+  async function handleDemoReset() {
+    setDemoResetStatus('loading')
+    setDemoResetError('')
+    const { data, error } = await supabase.functions.invoke('reset-demo-data')
+    if (error) {
+      setDemoResetStatus('error')
+      setDemoResetError('Could not reach reset-demo-data function. Make sure it is deployed.')
+    } else if (data?.error) {
+      setDemoResetStatus('error')
+      setDemoResetError(data.error)
+    } else {
+      setDemoResetStatus('done')
+      setTimeout(() => setDemoResetStatus(null), 5000)
     }
   }
 
@@ -439,22 +485,24 @@ export default function Settings() {
               <Mail size={14} className="text-slate-400" />
               Change Email
             </h3>
-            <form onSubmit={handleEmailChange} className="flex gap-2">
-              <input
-                type="email"
-                value={emailNew}
-                onChange={e => { setEmailNew(e.target.value); setEmailStatus(null) }}
-                placeholder="New email address"
-                className="flex-1 min-w-0 text-sm px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
-              />
-              <button
-                type="submit"
-                disabled={!emailNew.trim() || emailStatus === 'loading'}
-                className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
-              >
-                {emailStatus === 'loading' ? 'Sending…' : 'Update'}
-              </button>
-            </form>
+            <DemoLock active={isDemoMode}>
+              <form onSubmit={handleEmailChange} className="flex gap-2">
+                <input
+                  type="email"
+                  value={emailNew}
+                  onChange={e => { setEmailNew(e.target.value); setEmailStatus(null) }}
+                  placeholder="New email address"
+                  className="flex-1 min-w-0 text-sm px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
+                />
+                <button
+                  type="submit"
+                  disabled={!emailNew.trim() || emailStatus === 'loading'}
+                  className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+                >
+                  {emailStatus === 'loading' ? 'Sending…' : 'Update'}
+                </button>
+              </form>
+            </DemoLock>
             {emailStatus === 'sent' && (
               <p className="mt-2 text-sm text-emerald-600 flex items-center gap-1.5">
                 <CheckCircle size={14} /> Check your inbox to confirm the new address.
@@ -471,31 +519,33 @@ export default function Settings() {
               <Lock size={14} className="text-slate-400" />
               Change Password
             </h3>
-            <form onSubmit={handlePasswordChange} className="space-y-2">
-              <input
-                type="password"
-                value={passNew}
-                onChange={e => { setPassNew(e.target.value); setPassStatus(null) }}
-                placeholder="New password"
-                className="w-full text-sm px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
-              />
-              <div className="flex gap-2">
+            <DemoLock active={isDemoMode}>
+              <form onSubmit={handlePasswordChange} className="space-y-2">
                 <input
                   type="password"
-                  value={passConfirm}
-                  onChange={e => { setPassConfirm(e.target.value); setPassStatus(null) }}
-                  placeholder="Confirm new password"
-                  className="flex-1 min-w-0 text-sm px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
+                  value={passNew}
+                  onChange={e => { setPassNew(e.target.value); setPassStatus(null) }}
+                  placeholder="New password"
+                  className="w-full text-sm px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
                 />
-                <button
-                  type="submit"
-                  disabled={!passNew || !passConfirm || passStatus === 'loading'}
-                  className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
-                >
-                  {passStatus === 'loading' ? 'Saving…' : 'Update'}
-                </button>
-              </div>
-            </form>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    value={passConfirm}
+                    onChange={e => { setPassConfirm(e.target.value); setPassStatus(null) }}
+                    placeholder="Confirm new password"
+                    className="flex-1 min-w-0 text-sm px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!passNew || !passConfirm || passStatus === 'loading'}
+                    className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+                  >
+                    {passStatus === 'loading' ? 'Saving…' : 'Update'}
+                  </button>
+                </div>
+              </form>
+            </DemoLock>
             {passStatus === 'saved' && (
               <p className="mt-2 text-sm text-emerald-600 flex items-center gap-1.5">
                 <CheckCircle size={14} /> Password updated.
@@ -603,6 +653,33 @@ export default function Settings() {
               )}
             </div>
 
+          {/* Demo account reset */}
+          <div className="p-6">
+            <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100 mb-1 flex items-center gap-2">
+              <RotateCcw size={14} className="text-slate-400" />
+              Demo Account Reset
+            </h3>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">
+              Wipe all demo user data and restore the baseline 6-month dataset. Runs automatically at 03:00 UTC nightly.
+            </p>
+            <button
+              onClick={handleDemoReset}
+              disabled={demoResetStatus === 'loading'}
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+            >
+              <RotateCcw size={14} className={demoResetStatus === 'loading' ? 'animate-spin' : ''} />
+              {demoResetStatus === 'loading' ? 'Resetting…' : 'Run Now'}
+            </button>
+            {demoResetStatus === 'done' && (
+              <p className="mt-2 text-sm text-emerald-600 flex items-center gap-1.5">
+                <CheckCircle size={14} /> Demo data reset successfully.
+              </p>
+            )}
+            {demoResetStatus === 'error' && (
+              <p className="mt-2 text-sm text-red-600">{demoResetError}</p>
+            )}
+          </div>
+
           </div>
         </section>
       )}
@@ -660,16 +737,18 @@ export default function Settings() {
             </select>
           </div>
 
-          <button
-            onClick={handleSavePrefs}
-            className={`w-full py-2 text-sm font-medium rounded-lg transition-colors ${
-              prefsSaved
-                ? 'bg-emerald-600 text-white'
-                : 'bg-indigo-600 text-white hover:bg-indigo-700'
-            }`}
-          >
-            {prefsSaved ? 'Preferences saved!' : 'Save Preferences'}
-          </button>
+          <DemoLock active={isDemoMode}>
+            <button
+              onClick={handleSavePrefs}
+              className={`w-full py-2 text-sm font-medium rounded-lg transition-colors ${
+                prefsSaved
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-indigo-600 text-white hover:bg-indigo-700'
+              }`}
+            >
+              {prefsSaved ? 'Preferences saved!' : 'Save Preferences'}
+            </button>
+          </DemoLock>
         </div>
       </section>
 
@@ -706,13 +785,15 @@ export default function Settings() {
                   Restore from a previously exported JSON backup. This will overwrite all current data.
                 </p>
               </div>
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors shrink-0"
-              >
-                <Upload size={15} />
-                Choose File
-              </button>
+              <DemoLock active={isDemoMode}>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors shrink-0"
+                >
+                  <Upload size={15} />
+                  Choose File
+                </button>
+              </DemoLock>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -782,31 +863,33 @@ export default function Settings() {
                   <option key={m.key} value={m.key}>{m.label}</option>
                 ))}
               </select>
-              {!clearConfirm ? (
-                <button
-                  onClick={() => setClearConfirm(true)}
-                  className="flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors shrink-0"
-                >
-                  <Trash2 size={14} />
-                  Clear
-                </button>
-              ) : (
-                <div className="flex gap-1.5 shrink-0">
+              <DemoLock active={isDemoMode}>
+                {!clearConfirm ? (
                   <button
-                    onClick={handleClearMonth}
-                    disabled={clearLoading}
-                    className="px-3 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-60 transition-colors"
+                    onClick={() => setClearConfirm(true)}
+                    className="flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors shrink-0"
                   >
-                    {clearLoading ? '…' : 'Confirm'}
+                    <Trash2 size={14} />
+                    Clear
                   </button>
-                  <button
-                    onClick={() => setClearConfirm(false)}
-                    className="px-3 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              )}
+                ) : (
+                  <div className="flex gap-1.5 shrink-0">
+                    <button
+                      onClick={handleClearMonth}
+                      disabled={clearLoading}
+                      className="px-3 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-60 transition-colors"
+                    >
+                      {clearLoading ? '…' : 'Confirm'}
+                    </button>
+                    <button
+                      onClick={() => setClearConfirm(false)}
+                      className="px-3 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </DemoLock>
             </div>
             {clearDone && (
               <p className="mt-2 text-sm text-emerald-600 flex items-center gap-1.5">
@@ -846,47 +929,49 @@ export default function Settings() {
           <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">
             Permanently delete all your data and sign out. This cannot be undone.
           </p>
-          {!deleteOpen ? (
-            <button
-              onClick={() => setDeleteOpen(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-red-50 text-red-700 text-sm font-medium rounded-lg border border-red-200 hover:bg-red-100 transition-colors"
-            >
-              <Trash2 size={14} />
-              Delete Account Data
-            </button>
-          ) : (
-            <div className="p-4 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg">
-              <div className="flex items-start gap-2 mb-3">
-                <AlertTriangle size={14} className="text-red-500 mt-0.5 shrink-0" />
-                <p className="text-sm text-red-800 dark:text-red-300">
-                  This will delete all transactions, budgets, and categories, then sign you out.
-                  Type <strong>DELETE</strong> to confirm.
-                </p>
+          <DemoLock active={isDemoMode}>
+            {!deleteOpen ? (
+              <button
+                onClick={() => setDeleteOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-red-50 text-red-700 text-sm font-medium rounded-lg border border-red-200 hover:bg-red-100 transition-colors"
+              >
+                <Trash2 size={14} />
+                Delete Account Data
+              </button>
+            ) : (
+              <div className="p-4 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg">
+                <div className="flex items-start gap-2 mb-3">
+                  <AlertTriangle size={14} className="text-red-500 mt-0.5 shrink-0" />
+                  <p className="text-sm text-red-800 dark:text-red-300">
+                    This will delete all transactions, budgets, and categories, then sign you out.
+                    Type <strong>DELETE</strong> to confirm.
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={deleteInput}
+                    onChange={e => setDeleteInput(e.target.value)}
+                    placeholder="Type DELETE"
+                    className="flex-1 min-w-0 text-sm px-3 py-2 border border-red-200 dark:border-red-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-400 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
+                  />
+                  <button
+                    onClick={handleDeleteAccount}
+                    disabled={deleteInput !== 'DELETE' || deleteLoading}
+                    className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+                  >
+                    {deleteLoading ? 'Deleting…' : 'Delete'}
+                  </button>
+                  <button
+                    onClick={() => { setDeleteOpen(false); setDeleteInput('') }}
+                    className="px-3 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors shrink-0"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={deleteInput}
-                  onChange={e => setDeleteInput(e.target.value)}
-                  placeholder="Type DELETE"
-                  className="flex-1 min-w-0 text-sm px-3 py-2 border border-red-200 dark:border-red-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-400 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
-                />
-                <button
-                  onClick={handleDeleteAccount}
-                  disabled={deleteInput !== 'DELETE' || deleteLoading}
-                  className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
-                >
-                  {deleteLoading ? 'Deleting…' : 'Delete'}
-                </button>
-                <button
-                  onClick={() => { setDeleteOpen(false); setDeleteInput('') }}
-                  className="px-3 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors shrink-0"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
+            )}
+          </DemoLock>
         </div>
       </section>
 

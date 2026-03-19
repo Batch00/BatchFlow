@@ -3,10 +3,11 @@ import { useAuth } from '../context/AuthContext'
 import { LogoMark } from '../components/common/Logo'
 
 export default function Auth() {
-  const { signIn } = useAuth()
+  const { signIn, signInAsDemo } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const [demoLoading, setDemoLoading] = useState(false)
   const [error, setError] = useState('')
 
   async function handleSubmit(e) {
@@ -16,6 +17,14 @@ export default function Auth() {
     const { error } = await signIn(email, password)
     if (error) setError(error.message)
     setLoading(false)
+  }
+
+  async function handleDemoSignIn() {
+    setError('')
+    setDemoLoading(true)
+    const { error } = await signInAsDemo()
+    if (error) setError(error.message)
+    setDemoLoading(false)
   }
 
   return (
@@ -80,6 +89,26 @@ export default function Auth() {
             </form>
           </div>
         </div>
+
+        {import.meta.env.VITE_DEMO_EMAIL && (
+          <div className="mt-4">
+            <div className="relative flex items-center">
+              <div className="flex-1 border-t border-slate-200 dark:border-slate-700" />
+              <span className="mx-3 text-xs text-slate-400 dark:text-slate-500">or</span>
+              <div className="flex-1 border-t border-slate-200 dark:border-slate-700" />
+            </div>
+            <button
+              onClick={handleDemoSignIn}
+              disabled={demoLoading || loading}
+              className="mt-4 w-full py-2.5 border border-indigo-400 dark:border-indigo-500 text-indigo-600 dark:text-indigo-400 text-sm font-medium rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/20 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+            >
+              {demoLoading ? 'Loading demo...' : 'Try a live demo'}
+            </button>
+            <p className="text-center text-xs text-slate-400 dark:text-slate-500 mt-2">
+              Pre-loaded with sample data. Read-only account.
+            </p>
+          </div>
+        )}
 
         <p className="text-center text-xs text-slate-400 dark:text-slate-500 mt-5">
           BatchFlow is invite-only. Contact the administrator to request access.

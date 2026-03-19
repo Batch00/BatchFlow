@@ -16,3 +16,6 @@ verify_jwt = false
 
 [functions.admin-revoke]
 verify_jwt = false
+
+[functions.reset-demo-data]
+verify_jwt = false

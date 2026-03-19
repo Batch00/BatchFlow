@@ -32,8 +32,16 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe()
   }, [])
 
+  const isDemoMode = !!(user && import.meta.env.VITE_DEMO_USER_ID && user.id === import.meta.env.VITE_DEMO_USER_ID)
+
   const signIn = (email, password) =>
     supabase.auth.signInWithPassword({ email, password })
+
+  const signInAsDemo = () =>
+    supabase.auth.signInWithPassword({
+      email: import.meta.env.VITE_DEMO_EMAIL,
+      password: import.meta.env.VITE_DEMO_PASSWORD,
+    })
 
   // signUp is intentionally absent — account creation is invite-only.
   // New users are created exclusively via the admin invite flow in Settings.
@@ -50,9 +58,9 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthContext.Provider value={{
-      user, loading,
+      user, loading, isDemoMode,
       needsPasswordSetup, clearNeedsPasswordSetup,
-      signIn, signOut, updateEmail, updatePassword,
+      signIn, signInAsDemo, signOut, updateEmail, updatePassword,
     }}>
       {children}
     </AuthContext.Provider>
