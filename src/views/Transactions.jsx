@@ -141,7 +141,7 @@ export default function Transactions() {
             }`}>
               {t.type === 'income' ? '+' : '−'}{formatCurrency(t.amount)}
             </span>
-            <div className={`flex items-center gap-0.5 flex-shrink-0 ${t.isPending ? '' : 'opacity-0 group-hover:opacity-100'} transition-opacity`}>
+            <div className={`flex items-center gap-0.5 flex-shrink-0 ${t.isPending ? '' : 'sm:opacity-0 sm:group-hover:opacity-100'} transition-opacity`}>
               {t.isPending && (
                 <button
                   onClick={() => handleConfirm(t.id)}
@@ -235,7 +235,7 @@ export default function Transactions() {
         }`}>
           {t.type === 'income' ? '+' : '−'}{formatCurrency(t.amount)}
         </span>
-        <div className={`flex items-center gap-0.5 flex-shrink-0 ${t.isPending ? '' : 'opacity-0 group-hover:opacity-100'} transition-opacity`}>
+        <div className={`flex items-center gap-0.5 flex-shrink-0 ${t.isPending ? '' : 'sm:opacity-0 sm:group-hover:opacity-100'} transition-opacity`}>
           {t.isPending && (
             <button
               onClick={() => handleConfirm(t.id)}
