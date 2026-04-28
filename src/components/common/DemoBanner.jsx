@@ -12,7 +12,16 @@ export default function DemoBanner() {
     <div className="shrink-0 bg-amber-50 dark:bg-amber-950/60 border-b border-amber-200 dark:border-amber-800 px-4 py-2.5 flex items-center gap-3">
       <div className="h-2 w-2 rounded-full bg-amber-500 animate-pulse shrink-0" />
       <p className="text-sm text-amber-800 dark:text-amber-300 flex-1">
-        <strong>Demo mode</strong> — Changes are visible to all demo users and data resets nightly.
+        You are in demo mode - data resets nightly. Request access at{' '}
+        <a
+          href="https://www.batch-apps.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline font-medium hover:text-amber-900 dark:hover:text-amber-100 transition-colors"
+        >
+          batch-apps.com
+        </a>{' '}
+        to save your own budget.
       </p>
       <button
         onClick={() => setDismissed(true)}
