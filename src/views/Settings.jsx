@@ -8,7 +8,7 @@ import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
 import { loadData, saveData } from '../utils/storage'
-import { formatMonthLabel } from '../utils/formatters'
+import { formatMonthLabel, getTodayString } from '../utils/formatters'
 
 const APP_VERSION = '1.3.0'
 
@@ -221,7 +221,7 @@ export default function Settings() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `batchflow-backup-${new Date().toISOString().slice(0, 10)}.json`
+    a.download = `batchflow-backup-${getTodayString()}.json`
     a.click()
     URL.revokeObjectURL(url)
   }
