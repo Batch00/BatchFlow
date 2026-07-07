@@ -17,7 +17,7 @@ export default defineConfig({
         name: 'BatchFlow',
         short_name: 'BatchFlow',
         description: 'Own your flow',
-        theme_color: '#4f46e5',
+        theme_color: '#0f172a',
         background_color: '#0f172a',
         display: 'standalone',
         orientation: 'portrait',
