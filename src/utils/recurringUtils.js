@@ -60,18 +60,23 @@ export function getOccurrencesInMonth(rule, monthKey) {
       }
     }
   } else {
-    // weekly (7 days) or biweekly (14 days) — iterate from rule start
-    const stepMs = (rule.frequency === 'weekly' ? 7 : 14) * 24 * 60 * 60 * 1000
+    // weekly (7 days) or biweekly (14 days) — iterate from rule start.
+    // Step by calendar days (re-anchored to noon each time) rather than a fixed
+    // millisecond delta, so DST transitions don't drift the time-of-day and
+    // cause the last-day-of-month boundary comparison to miss an occurrence.
+    const stepDays = rule.frequency === 'weekly' ? 7 : 14
+    const advance = (d) =>
+      new Date(d.getFullYear(), d.getMonth(), d.getDate() + stepDays, 12, 0, 0)
     let current = new Date(ruleStart)
     // Advance to first occurrence >= monthStart
     while (current < monthStart) {
-      current = new Date(current.getTime() + stepMs)
+      current = advance(current)
     }
     while (current <= monthEnd) {
       if (!ruleEnd || current <= ruleEnd) {
         results.push(toDateStr(current))
       }
-      current = new Date(current.getTime() + stepMs)
+      current = advance(current)
     }
   }
 
