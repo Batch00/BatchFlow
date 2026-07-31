@@ -46,14 +46,14 @@ export default function ProgressBar({ spent, planned, type = 'expense', pending 
         </div>
       </div>
       {showLabels && !compact && (
-        <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400 mt-1">
-          <span>
-            {formatCurrency(spent)} {isIncome ? 'received' : 'spent'}
+        <div className="flex justify-between gap-2 text-xs text-slate-500 dark:text-slate-400 mt-1">
+          <span className="min-w-0">
+            <span className="whitespace-nowrap">{formatCurrency(spent)} {isIncome ? 'received' : 'spent'}</span>
             {pending > 0.01 && (
-              <> · <span className="text-amber-500 dark:text-amber-400">{formatCurrency(pending)} pending</span></>
+              <> · <span className="text-amber-500 dark:text-amber-400 whitespace-nowrap">{formatCurrency(pending)} pending</span></>
             )}
           </span>
-          <span className={isOver ? 'text-red-500 font-medium' : ''}>
+          <span className={`flex-shrink-0 whitespace-nowrap ${isOver ? 'text-red-500 font-medium' : ''}`}>
             {isOver
               ? `${formatCurrency(Math.abs(remaining))} over`
               : `${formatCurrency(Math.max(0, remaining))} left`}

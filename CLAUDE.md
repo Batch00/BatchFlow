@@ -53,10 +53,12 @@ src/
     └── Settings.jsx          # Install prompt, account, preferences, data export/import, admin invite panel
 
 supabase/
+├── demo_data.sql             # Demo account: read-only triggers + rolling monthly data
 └── functions/
     ├── admin-invite/         # Edge Function: invite user by email (service role)
     ├── admin-list-users/     # Edge Function: list non-admin users
-    └── admin-revoke/         # Edge Function: delete a user account
+    ├── admin-revoke/         # Edge Function: delete a user account
+    └── refresh-demo-data/    # Edge Function: manual demo top-up (calls ensure_demo_data)
 ```
 
 ## Architecture
@@ -70,6 +72,10 @@ supabase/
 **Invite flow** - user clicks invite link, lands on app with `type=invite` in URL hash, Supabase session is established automatically, `needsPasswordSetup` is set to `true`, `SetPassword.jsx` is shown instead of the app. After the user sets a password, `clearNeedsPasswordSetup()` is called and the app loads normally.
 
 **Edge Functions** (`supabase/functions/`) - all three functions run on Deno, always return HTTP 200 with a JSON body (`{ error: string }` or the success payload), include a top-level try/catch, and verify the caller JWT using `adminClient.auth.getUser(token)` before checking the admin email. `verify_jwt = false` is set in `supabase/config.toml` so the Supabase gateway does not reject requests before function code runs. Deploy with `supabase functions deploy admin-invite admin-list-users admin-revoke`.
+
+**Demo mode (read-only)** - `isDemoMode` in `AuthContext` is true when `user.id === VITE_DEMO_USER_ID`. `AppContext` re-exports it as `readOnly` and every mutation short-circuits through an internal `blocked()` guard, so a stray call is a silent no-op rather than a thrown error. Views read `readOnly` from `useApp()` and disable their controls using the helpers in `components/common/ReadOnly.jsx` (`disabledCls`, `readOnlyProps`) - keep controls visible and disabled with a reason, never silently hidden or left enabled to fail. **When adding a new mutation to `AppContext`, add the `if (blocked()) return` guard**; the UI layer alone is not sufficient. Server-side, `demo_read_only` triggers on all seven data tables reject any write where `auth.uid()` is the demo user; service-role and pg_cron callers have a NULL `auth.uid()` and are unaffected.
+
+**Demo data generation** - `supabase/demo_data.sql` (run manually in the SQL editor) defines `ensure_demo_data()`, which keeps a rolling trailing window of 13 months ending at the current month and prunes past 18. It is idempotent: `demo_generate_month()` skips any month that already has transactions, so re-running only backfills gaps. Structure (categories, subcategories, recurring rules) is created once with stable IDs so history stays intact. A pg_cron job `demo-monthly-topup` runs it at 03:00 UTC on the 1st; the admin panel in Settings can trigger it on demand via the `refresh-demo-data` Edge Function. This replaced an older nightly wipe-and-reseed (`reset_demo_data()` / the `reset-demo-data` job), both of which are dropped by the script. Because the demo account cannot write, `generateRecurringInstances` is blocked for it and the current month's pending recurring rows are materialised by the SQL instead.
 
 **`budgetUtils.js`** - pure functions for spending totals and progress. `getCategorySpent` / `getSubcategorySpent` handle both flat and split transactions. `getProgressStatus(spent, planned, type)` accepts `'income'|'expense'`; yellow threshold is 50% for both. Expense: green -> yellow (50%) -> red (strictly over). Income: neutral -> yellow (50%) -> green (100%).
 
@@ -140,6 +146,10 @@ Cascade deletes: category -> subcategories + budget_plans; transaction -> splits
 
 ## Design Guidelines
 - Clean and modern, mobile-friendly; sidebar nav, card-based layouts
+- **Mobile is the primary target.** Verify layouts at 390px and 360px viewport widths. No page may scroll horizontally at those widths; put wide tables in an `overflow-x-auto` container instead.
+- **Currency must never wrap.** Render signed amounts with `formatSignedCurrency(amount, type)` (one unbreakable string) rather than a separate `+`/`−` next to `formatCurrency`, and put `whitespace-nowrap tabular-nums` on the element. `formatCurrency` already converts internal spaces to non-breaking spaces.
+- Row layouts: give the text column `min-w-0` and the amount `flex-shrink-0`, otherwise the amount squeezes the label to nothing.
+- Icon buttons need ≥30px tap targets on touch: `p-2 sm:p-1.5`.
 - Progress bar colors: **Expense** green -> yellow (50%) -> red (strictly over budget); **Income** neutral -> yellow (50%) -> green (100%)
 - "received" label for income, "spent" for expense
 - Floating-point guard: use `Math.abs(val) < 0.01` for zero checks; use `spent - planned > 0.01` for "over budget" check

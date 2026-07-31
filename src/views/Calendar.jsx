@@ -1,14 +1,14 @@
 import { useState, useMemo } from 'react'
 import { DollarSign, AlertTriangle, X, Pencil, RefreshCw } from 'lucide-react'
 import { useApp } from '../context/AppContext'
-import { formatCurrency, formatDate, formatMonthLabel } from '../utils/formatters'
+import { formatCurrency, formatSignedCurrency, formatDate, formatMonthLabel } from '../utils/formatters'
 import TransactionModal from '../components/transactions/TransactionModal'
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 // ── DayModal ──────────────────────────────────────────────────────────────────
 
-function DayModal({ dayStr, transactions, categories, onClose, onEditTransaction }) {
+function DayModal({ dayStr, transactions, categories, onClose, onEditTransaction, readOnly }) {
   const catMap = useMemo(() => Object.fromEntries(categories.map(c => [c.id, c])), [categories])
 
   const incomeItems = transactions.filter(t => t.type === 'income')
@@ -33,11 +33,11 @@ function DayModal({ dayStr, transactions, categories, onClose, onEditTransaction
               <p className="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">Income</p>
               <div className="space-y-0.5">
                 {incomeItems.map((t, i) => (
-                  <div key={i} className="flex items-center justify-between py-2 border-b border-slate-100 dark:border-slate-700/60 last:border-0">
-                    <div className="flex items-center gap-2">
+                  <div key={i} className="flex items-center justify-between gap-2 py-2 border-b border-slate-100 dark:border-slate-700/60 last:border-0">
+                    <div className="flex items-center gap-2 min-w-0">
                       <div className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0" />
-                      <div>
-                        <p className="text-sm font-medium text-slate-900 dark:text-white">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
                           {t.merchant || catMap[t.categoryId]?.name || 'Income'}
                         </p>
                         {t.isPending && (
@@ -45,14 +45,17 @@ function DayModal({ dayStr, transactions, categories, onClose, onEditTransaction
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">{formatCurrency(t.amount)}</span>
-                      <button
-                        onClick={() => onEditTransaction(t)}
-                        className="text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
-                      >
-                        <Pencil size={13} />
-                      </button>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap tabular-nums">{formatCurrency(t.amount)}</span>
+                      {!readOnly && (
+                        <button
+                          onClick={() => onEditTransaction(t)}
+                          title="Edit"
+                          className="p-1.5 -mr-1 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -67,27 +70,30 @@ function DayModal({ dayStr, transactions, categories, onClose, onEditTransaction
                 {expenses.map((t, i) => {
                   const cat = catMap[t.categoryId]
                   return (
-                    <div key={i} className="flex items-center justify-between py-2 border-b border-slate-100 dark:border-slate-700/60 last:border-0">
-                      <div className="flex items-center gap-2">
+                    <div key={i} className="flex items-center justify-between gap-2 py-2 border-b border-slate-100 dark:border-slate-700/60 last:border-0">
+                      <div className="flex items-center gap-2 min-w-0">
                         <div
                           className="w-2 h-2 rounded-full flex-shrink-0"
                           style={{ backgroundColor: cat?.color ?? '#94a3b8' }}
                         />
-                        <div>
-                          <p className="text-sm font-medium text-slate-900 dark:text-white">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
                             {t.merchant || cat?.name || 'Expense'}
                           </p>
                           {t.isPending && <span className="text-xs text-amber-500">Pending</span>}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-red-500 dark:text-red-400">{formatCurrency(t.amount)}</span>
-                        <button
-                          onClick={() => onEditTransaction(t)}
-                          className="text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
-                        >
-                          <Pencil size={13} />
-                        </button>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <span className="text-sm font-semibold text-red-500 dark:text-red-400 whitespace-nowrap tabular-nums">{formatCurrency(t.amount)}</span>
+                        {!readOnly && (
+                          <button
+                            onClick={() => onEditTransaction(t)}
+                            title="Edit"
+                            className="p-1.5 -mr-1 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                        )}
                       </div>
                     </div>
                   )
@@ -109,6 +115,7 @@ export default function Calendar() {
     currentMonthTransactions,
     categories,
     recurringRules,
+    readOnly,
   } = useApp()
 
   const [year, month] = currentMonth.split('-').map(Number)
@@ -212,13 +219,21 @@ export default function Calendar() {
             const { transactions: dayTxns = [] } = inMonth ? (eventsByDay[day] ?? {}) : {}
             const shown = dayTxns.slice(0, 3)
             const extra = dayTxns.length - shown.length
+            // Cells are only ~40px wide on a 360px screen, far too narrow for text
+            // chips — mobile gets colour dots instead and taps through for detail.
+            const dots = dayTxns.slice(0, 4)
+            const dotExtra = dayTxns.length - dots.length
+
+            const colorFor = item => item.type === 'income'
+              ? '#10b981'
+              : (catMap[item.categoryId]?.color ?? '#ef4444')
 
             return (
               <div
                 key={idx}
                 onClick={() => inMonth && setSelectedDay(day)}
                 className={[
-                  'min-h-[90px] p-1.5 border-b border-slate-100 dark:border-slate-700/60',
+                  'min-h-[62px] sm:min-h-[90px] p-1 sm:p-1.5 border-b border-slate-100 dark:border-slate-700/60',
                   idx % 7 !== 6 ? 'border-r border-slate-100 dark:border-slate-700/60' : '',
                   idx >= totalCells - 7 ? 'border-b-0' : '',
                   inMonth ? 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors' : 'bg-slate-50/50 dark:bg-slate-800/30',
@@ -228,13 +243,29 @@ export default function Calendar() {
                   <>
                     <div
                       className={[
-                        'text-xs font-semibold w-6 h-6 flex items-center justify-center rounded-full mb-1',
+                        'text-[11px] sm:text-xs font-semibold w-6 h-6 flex items-center justify-center rounded-full mb-1 mx-auto sm:mx-0',
                         isToday ? 'bg-indigo-600 text-white' : 'text-slate-700 dark:text-slate-300',
                       ].join(' ')}
                     >
                       {day}
                     </div>
-                    <div className="space-y-0.5">
+
+                    {/* Mobile: dots */}
+                    <div className="flex sm:hidden flex-wrap justify-center items-center gap-0.5">
+                      {dots.map((item, i) => (
+                        <span
+                          key={i}
+                          className={`w-1.5 h-1.5 rounded-full ${item.isPending ? 'opacity-50' : ''}`}
+                          style={{ backgroundColor: colorFor(item) }}
+                        />
+                      ))}
+                      {dotExtra > 0 && (
+                        <span className="text-[9px] leading-none text-slate-400 dark:text-slate-500">+{dotExtra}</span>
+                      )}
+                    </div>
+
+                    {/* Desktop: labelled chips */}
+                    <div className="hidden sm:block space-y-0.5">
                       {shown.map((item, i) => {
                         if (item.type === 'income') {
                           return (
@@ -275,10 +306,10 @@ export default function Calendar() {
 
       {/* Income — recurring + confirmed one-time */}
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-700">
+        <div className="flex items-center justify-between gap-2 px-4 sm:px-5 py-4 border-b border-slate-200 dark:border-slate-700">
           <h2 className="font-semibold text-slate-900 dark:text-white">Income</h2>
           {incomeTotal > 0 && (
-            <span className="text-sm font-medium text-emerald-600 dark:text-emerald-400">
+            <span className="text-sm font-medium text-emerald-600 dark:text-emerald-400 whitespace-nowrap tabular-nums flex-shrink-0">
               {formatCurrency(incomeTotal)} total
             </span>
           )}
@@ -297,14 +328,14 @@ export default function Calendar() {
         ) : (
           <div className="divide-y divide-slate-100 dark:divide-slate-700/60">
             {incomeItems.map(t => (
-              <div key={t.id} className="flex items-center justify-between px-5 py-3">
-                <div className="flex items-center gap-3">
+              <div key={t.id} className="flex items-center justify-between gap-2 px-4 sm:px-5 py-3">
+                <div className="flex items-center gap-3 min-w-0">
                   <div className="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center flex-shrink-0">
                     <DollarSign size={14} className="text-emerald-600 dark:text-emerald-400" />
                   </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium text-slate-900 dark:text-white">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
                         {t.merchant || catMap[t.categoryId]?.name || 'Income'}
                       </p>
                       {t.recurringRuleId ? (
@@ -319,14 +350,14 @@ export default function Calendar() {
                       )}
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <p className="text-xs text-slate-500 dark:text-slate-400">{formatDate(t.date)}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap">{formatDate(t.date)}</p>
                       {t.isPending && (
                         <span className="text-xs text-amber-500">Pending</span>
                       )}
                     </div>
                   </div>
                 </div>
-                <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+                <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap tabular-nums flex-shrink-0">
                   {formatCurrency(t.amount)}
                 </span>
               </div>
@@ -337,15 +368,16 @@ export default function Calendar() {
 
       {/* Cash Flow */}
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-700">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-5 py-4 border-b border-slate-200 dark:border-slate-700">
           <h2 className="font-semibold text-slate-900 dark:text-white">Cash Flow</h2>
           <div className="flex items-center gap-2">
-            <label className="text-xs text-slate-500 dark:text-slate-400">Starting balance</label>
+            <label className="text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap">Starting balance</label>
             <input
               type="number"
+              inputMode="decimal"
               value={startingBalance}
               onChange={e => setStartingBalance(e.target.value)}
-              className="w-28 border border-slate-200 dark:border-slate-600 rounded-lg px-2 py-1 text-xs bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              className="w-28 border border-slate-200 dark:border-slate-600 rounded-lg px-2 py-1.5 text-xs bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
             />
           </div>
         </div>
@@ -355,13 +387,13 @@ export default function Calendar() {
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm min-w-[420px]">
               <thead>
                 <tr className="border-b border-slate-100 dark:border-slate-700/60">
-                  <th className="text-left px-5 py-2.5 text-xs font-semibold text-slate-500 dark:text-slate-400">Date</th>
-                  <th className="text-right px-5 py-2.5 text-xs font-semibold text-slate-500 dark:text-slate-400">Income</th>
-                  <th className="text-right px-5 py-2.5 text-xs font-semibold text-slate-500 dark:text-slate-400">Expenses</th>
-                  <th className="text-right px-5 py-2.5 text-xs font-semibold text-slate-500 dark:text-slate-400">Balance</th>
+                  <th className="text-left px-3 sm:px-5 py-2.5 text-xs font-semibold text-slate-500 dark:text-slate-400">Date</th>
+                  <th className="text-right px-3 sm:px-5 py-2.5 text-xs font-semibold text-slate-500 dark:text-slate-400">Income</th>
+                  <th className="text-right px-3 sm:px-5 py-2.5 text-xs font-semibold text-slate-500 dark:text-slate-400">Expenses</th>
+                  <th className="text-right px-3 sm:px-5 py-2.5 text-xs font-semibold text-slate-500 dark:text-slate-400">Balance</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50 dark:divide-slate-700/40">
@@ -370,19 +402,19 @@ export default function Calendar() {
                   const dateStr = `${currentMonth}-${String(row.day).padStart(2, '0')}`
                   return (
                     <tr key={row.day} className={isNeg ? 'bg-red-50/60 dark:bg-red-900/10' : ''}>
-                      <td className="px-5 py-2.5 text-slate-700 dark:text-slate-300">
-                        <span className="flex items-center gap-1.5">
+                      <td className="px-3 sm:px-5 py-2.5 text-slate-700 dark:text-slate-300">
+                        <span className="flex items-center gap-1.5 whitespace-nowrap">
                           {isNeg && <AlertTriangle size={12} className="text-red-500 flex-shrink-0" />}
                           {formatDate(dateStr)}
                         </span>
                       </td>
-                      <td className="px-5 py-2.5 text-right text-emerald-600 dark:text-emerald-400 tabular-nums">
-                        {row.income > 0 ? `+${formatCurrency(row.income)}` : '—'}
+                      <td className="px-3 sm:px-5 py-2.5 text-right text-emerald-600 dark:text-emerald-400 tabular-nums whitespace-nowrap">
+                        {row.income > 0 ? formatSignedCurrency(row.income, 'income') : '—'}
                       </td>
-                      <td className="px-5 py-2.5 text-right text-red-500 dark:text-red-400 tabular-nums">
-                        {row.expenses > 0 ? `-${formatCurrency(row.expenses)}` : '—'}
+                      <td className="px-3 sm:px-5 py-2.5 text-right text-red-500 dark:text-red-400 tabular-nums whitespace-nowrap">
+                        {row.expenses > 0 ? formatSignedCurrency(row.expenses, 'expense') : '—'}
                       </td>
-                      <td className={`px-5 py-2.5 text-right font-semibold tabular-nums ${isNeg ? 'text-red-600 dark:text-red-400' : 'text-slate-900 dark:text-white'}`}>
+                      <td className={`px-3 sm:px-5 py-2.5 text-right font-semibold tabular-nums whitespace-nowrap ${isNeg ? 'text-red-600 dark:text-red-400' : 'text-slate-900 dark:text-white'}`}>
                         {formatCurrency(row.balance)}
                       </td>
                     </tr>
@@ -400,6 +432,7 @@ export default function Calendar() {
           dayStr={selectedDayStr}
           transactions={selectedEvents.transactions}
           categories={categories}
+          readOnly={readOnly}
           onClose={() => setSelectedDay(null)}
           onEditTransaction={t => { setSelectedDay(null); setEditingTransaction(t) }}
         />

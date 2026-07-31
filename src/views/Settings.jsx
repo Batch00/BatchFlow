@@ -60,23 +60,18 @@ function isValidBackup(data) {
   )
 }
 
+// Wraps an editing control that the read-only demo account cannot use. The reason is
+// shown as persistent text rather than a hover tooltip, because hover does not exist
+// on touch devices — the demo is mostly viewed on a phone.
 function DemoLock({ children, active }) {
-  const [tip, setTip] = useState(false)
   if (!active) return children
   return (
-    <div
-      className="relative"
-      onMouseEnter={() => setTip(true)}
-      onMouseLeave={() => setTip(false)}
-    >
-      <div className="opacity-50 pointer-events-none select-none">{children}</div>
-      {tip && (
-        <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
-          <div className="bg-slate-800 dark:bg-slate-700 text-white text-xs rounded-lg px-3 py-2 shadow-lg">
-            Not available in demo mode
-          </div>
-        </div>
-      )}
+    <div>
+      <div className="opacity-40 pointer-events-none select-none" aria-hidden="true">{children}</div>
+      <p className="mt-2 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+        <Lock size={11} className="shrink-0" />
+        Disabled in the read-only demo
+      </p>
     </div>
   )
 }
@@ -336,22 +331,25 @@ export default function Settings() {
     }
   }
 
-  const [demoResetStatus, setDemoResetStatus] = useState(null) // null | 'loading' | 'done' | 'error'
-  const [demoResetError, setDemoResetError] = useState('')
+  const [demoRefreshStatus, setDemoRefreshStatus] = useState(null) // null | 'loading' | 'done' | 'error'
+  const [demoRefreshError, setDemoRefreshError] = useState('')
+  const [demoRefreshInfo, setDemoRefreshInfo] = useState(null)
 
-  async function handleDemoReset() {
-    setDemoResetStatus('loading')
-    setDemoResetError('')
-    const { data, error } = await supabase.functions.invoke('reset-demo-data')
+  async function handleDemoRefresh() {
+    setDemoRefreshStatus('loading')
+    setDemoRefreshError('')
+    setDemoRefreshInfo(null)
+    const { data, error } = await supabase.functions.invoke('refresh-demo-data')
     if (error) {
-      setDemoResetStatus('error')
-      setDemoResetError('Could not reach reset-demo-data function. Make sure it is deployed.')
+      setDemoRefreshStatus('error')
+      setDemoRefreshError('Could not reach refresh-demo-data function. Make sure it is deployed.')
     } else if (data?.error) {
-      setDemoResetStatus('error')
-      setDemoResetError(data.error)
+      setDemoRefreshStatus('error')
+      setDemoRefreshError(data.error)
     } else {
-      setDemoResetStatus('done')
-      setTimeout(() => setDemoResetStatus(null), 5000)
+      setDemoRefreshStatus('done')
+      setDemoRefreshInfo(data?.result ?? null)
+      setTimeout(() => setDemoRefreshStatus(null), 6000)
     }
   }
 
@@ -421,7 +419,7 @@ export default function Settings() {
               </div>
             ) : (
               // Chrome / Edge — fire the captured beforeinstallprompt
-              <div className="flex items-start justify-between gap-4">
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
                 <div>
                   <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Install BatchFlow</h3>
                   <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
@@ -430,7 +428,7 @@ export default function Settings() {
                 </div>
                 <button
                   onClick={handleInstall}
-                  className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors shrink-0"
+                  className="flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors shrink-0"
                 >
                   <Smartphone size={15} />
                   Install
@@ -615,8 +613,8 @@ export default function Settings() {
               ) : (
                 <ul className="space-y-1">
                   {invitedUsers.map(u => (
-                    <li key={u.id} className="flex items-center justify-between gap-3 py-2.5 border-b border-slate-100 dark:border-slate-700 last:border-0">
-                      <div className="min-w-0">
+                    <li key={u.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5 border-b border-slate-100 dark:border-slate-700 last:border-0">
+                      <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">{u.email}</p>
                         <p className="text-xs text-slate-400">
                           {u.confirmed_at ? 'Active' : 'Pending invitation'}
@@ -653,30 +651,34 @@ export default function Settings() {
               )}
             </div>
 
-          {/* Demo account reset */}
+          {/* Demo data top-up */}
           <div className="p-6">
             <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100 mb-1 flex items-center gap-2">
               <RotateCcw size={14} className="text-slate-400" />
-              Demo Account Reset
+              Demo Data Refresh
             </h3>
             <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">
-              Wipe all demo user data and restore the baseline 6-month dataset. Runs automatically at 03:00 UTC nightly.
+              Tops the demo account up so it always shows a full trailing 13 months ending
+              with the current month, and prunes anything older than 18 months. Existing
+              months are left untouched. Runs automatically on the 1st of each month at
+              03:00 UTC; this button only backfills what is missing.
             </p>
             <button
-              onClick={handleDemoReset}
-              disabled={demoResetStatus === 'loading'}
+              onClick={handleDemoRefresh}
+              disabled={demoRefreshStatus === 'loading'}
               className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
             >
-              <RotateCcw size={14} className={demoResetStatus === 'loading' ? 'animate-spin' : ''} />
-              {demoResetStatus === 'loading' ? 'Resetting…' : 'Run Now'}
+              <RotateCcw size={14} className={demoRefreshStatus === 'loading' ? 'animate-spin' : ''} />
+              {demoRefreshStatus === 'loading' ? 'Refreshing…' : 'Run Now'}
             </button>
-            {demoResetStatus === 'done' && (
-              <p className="mt-2 text-sm text-emerald-600 flex items-center gap-1.5">
-                <CheckCircle size={14} /> Demo data reset successfully.
+            {demoRefreshStatus === 'done' && (
+              <p className="mt-2 text-sm text-emerald-600 flex items-start gap-1.5">
+                <CheckCircle size={14} className="mt-0.5 shrink-0" />
+                <span>{demoRefreshInfo || 'Demo data is up to date.'}</span>
               </p>
             )}
-            {demoResetStatus === 'error' && (
-              <p className="mt-2 text-sm text-red-600">{demoResetError}</p>
+            {demoRefreshStatus === 'error' && (
+              <p className="mt-2 text-sm text-red-600">{demoRefreshError}</p>
             )}
           </div>
 
@@ -759,7 +761,7 @@ export default function Settings() {
 
           {/* Export */}
           <div className="p-6">
-            <div className="flex items-start justify-between gap-4">
+            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
               <div>
                 <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Export Backup</h3>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
@@ -768,7 +770,7 @@ export default function Settings() {
               </div>
               <button
                 onClick={handleExport}
-                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors shrink-0"
+                className="flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors shrink-0"
               >
                 <Download size={15} />
                 Export JSON
@@ -778,7 +780,7 @@ export default function Settings() {
 
           {/* Import */}
           <div className="p-6">
-            <div className="flex items-start justify-between gap-4">
+            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
               <div>
                 <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Import Backup</h3>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
@@ -788,7 +790,7 @@ export default function Settings() {
               <DemoLock active={isDemoMode}>
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors shrink-0"
+                  className="flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors shrink-0"
                 >
                   <Upload size={15} />
                   Choose File
@@ -853,7 +855,7 @@ export default function Settings() {
             <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">
               Delete all transactions and budget plans for a specific month.
             </p>
-            <div className="flex gap-2">
+            <div className="flex flex-col sm:flex-row gap-2">
               <select
                 value={clearMonthKey}
                 onChange={e => { setClearMonthKey(e.target.value); setClearConfirm(false); setClearDone(false) }}
@@ -867,7 +869,7 @@ export default function Settings() {
                 {!clearConfirm ? (
                   <button
                     onClick={() => setClearConfirm(true)}
-                    className="flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors shrink-0"
+                    className="flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors shrink-0"
                   >
                     <Trash2 size={14} />
                     Clear
@@ -947,13 +949,13 @@ export default function Settings() {
                     Type <strong>DELETE</strong> to confirm.
                   </p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <input
                     type="text"
                     value={deleteInput}
                     onChange={e => setDeleteInput(e.target.value)}
                     placeholder="Type DELETE"
-                    className="flex-1 min-w-0 text-sm px-3 py-2 border border-red-200 dark:border-red-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-400 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
+                    className="flex-1 basis-full sm:basis-0 min-w-0 text-sm px-3 py-2 border border-red-200 dark:border-red-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-400 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
                   />
                   <button
                     onClick={handleDeleteAccount}

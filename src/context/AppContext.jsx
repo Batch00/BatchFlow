@@ -103,7 +103,17 @@ function dbToBudgets(planRows) {
 // ── Provider ──────────────────────────────────────────────────────────────────
 
 export function AppProvider({ children }) {
-  const { user } = useAuth()
+  const { user, isDemoMode } = useAuth()
+
+  // ── Read-only mode ───────────────────────────────────────────────────────────
+  // The demo account is fully read-only. Every mutation below short-circuits via
+  // `blocked()` so a stray call can never reach Supabase (where a database trigger
+  // rejects it anyway). The UI disables the corresponding controls, so this layer
+  // exists to make an accidental write a silent no-op rather than a thrown error.
+  const readOnly = isDemoMode
+  const readOnlyRef = useRef(readOnly)
+  useEffect(() => { readOnlyRef.current = readOnly }, [readOnly])
+  const blocked = () => readOnlyRef.current
 
   // currentMonth is UI state only — persisted in localStorage, not Supabase
   const [currentMonth, setCurrentMonthState] = useState(
@@ -122,10 +132,14 @@ export function AppProvider({ children }) {
     return t === 'system' ? 'dark' : t
   })
 
+  // Theme is a view preference, so read-only accounts may still change it — but the
+  // change stays local rather than being persisted to the shared demo user record.
   const setTheme = useCallback((newTheme) => {
     setThemeState(newTheme)
     saveData('theme', newTheme)
-    supabase.auth.updateUser({ data: { theme: newTheme } }).catch(() => {})
+    if (!readOnlyRef.current) {
+      supabase.auth.updateUser({ data: { theme: newTheme } }).catch(() => {})
+    }
   }, [])
 
   // Apply/remove .dark class on <html> and update PWA theme-color meta tags
@@ -237,7 +251,8 @@ export function AppProvider({ children }) {
   // refs are updated with the freshly fetched data.
 
   const generateRecurringInstances = useCallback(async (monthKey, txnsOverride, rulesOverride) => {
-    if (!user) return
+    // Read-only accounts never write instances — their pending rows are pre-seeded server-side
+    if (!user || blocked()) return
     const rules = rulesOverride ?? recurringRulesRef.current
     const currentTxns = txnsOverride ?? transactionsRef.current
 
@@ -402,7 +417,9 @@ export function AppProvider({ children }) {
         paycheckPlans: (paycheckRows ?? []).length,
       })
 
-      const isNewAccount = catRows.length === 0
+      // Read-only accounts never seed — an empty demo account is a data problem to
+      // fix server-side, not something the client should try to write its way out of.
+      const isNewAccount = catRows.length === 0 && !readOnlyRef.current
       const cats = isNewAccount
         ? await seedDefaults()
         : catRows.map(row => dbToCategory(row, subRows ?? []))
@@ -442,6 +459,7 @@ export function AppProvider({ children }) {
   // ── Transactions ─────────────────────────────────────────────────────────────
 
   const addTransaction = useCallback(async (transaction) => {
+    if (blocked()) return null
     const isSplit = transaction.categoryId === null && Array.isArray(transaction.splits)
 
     const { data: txRow, error: txErr } = await supabase
@@ -486,6 +504,7 @@ export function AppProvider({ children }) {
   }, [user])
 
   const updateTransaction = useCallback(async (id, updates) => {
+    if (blocked()) return
     // Use ref so we always read the latest transactions without stale closure
     const existing = transactionsRef.current.find(t => t.id === id)
     if (!existing) return
@@ -559,6 +578,7 @@ export function AppProvider({ children }) {
   }, [user])
 
   const deleteTransaction = useCallback(async (id) => {
+    if (blocked()) return
     // transaction_splits cascade-delete from the DB schema
     const { error } = await supabase.from('transactions').delete()
       .eq('id', id).eq('user_id', user.id) // defense-in-depth: RLS enforces this server-side too
@@ -567,6 +587,7 @@ export function AppProvider({ children }) {
   }, [user])
 
   const confirmTransaction = useCallback(async (id) => {
+    if (blocked()) return
     const { error } = await supabase
       .from('transactions')
       .update({ is_pending: false })
@@ -579,6 +600,7 @@ export function AppProvider({ children }) {
   // ── Recurring Rules ───────────────────────────────────────────────────────────
 
   const addRecurringRule = useCallback(async (ruleData) => {
+    if (blocked()) return null
     const { data: row, error } = await supabase
       .from('recurring_rules')
       .insert({
@@ -605,6 +627,7 @@ export function AppProvider({ children }) {
   }, [user])
 
   const updateRecurringRule = useCallback(async (id, updates) => {
+    if (blocked()) return null
     const { data: row, error } = await supabase
       .from('recurring_rules')
       .update({
@@ -663,6 +686,7 @@ export function AppProvider({ children }) {
   }, [user, generateRecurringInstances, refreshTransactions])
 
   const pauseRecurringRule = useCallback(async (id, isPaused) => {
+    if (blocked()) return
     const { error } = await supabase
       .from('recurring_rules')
       .update({ is_paused: isPaused })
@@ -673,6 +697,7 @@ export function AppProvider({ children }) {
   }, [user])
 
   const deleteRecurringRule = useCallback(async (id) => {
+    if (blocked()) return
     // Delete pending instances for this rule (confirmed instances stay, auto-detach via ON DELETE SET NULL)
     await supabase.from('transactions')
       .delete()
@@ -697,6 +722,7 @@ export function AppProvider({ children }) {
   // ── Paycheck Plans ────────────────────────────────────────────────────────────
 
   const addPaycheckPlan = useCallback(async ({ label, date, amount, monthKey }) => {
+    if (blocked()) return null
     const { data: row, error } = await supabase
       .from('paycheck_plans')
       .insert({ user_id: user.id, month_key: monthKey, date, amount, label })
@@ -709,6 +735,7 @@ export function AppProvider({ children }) {
   }, [user])
 
   const updatePaycheckPlan = useCallback(async (id, { label, date, amount }) => {
+    if (blocked()) return
     const { data: row, error } = await supabase
       .from('paycheck_plans')
       .update({ label, date, amount })
@@ -722,6 +749,7 @@ export function AppProvider({ children }) {
   }, [user])
 
   const deletePaycheckPlan = useCallback(async (id) => {
+    if (blocked()) return
     const { error } = await supabase
       .from('paycheck_plans')
       .delete()
@@ -736,6 +764,7 @@ export function AppProvider({ children }) {
   // We use DELETE + INSERT instead of upsert to avoid issues with partial unique indexes.
 
   const setBudgetAmount = useCallback(async (monthKey, categoryId, amount) => {
+    if (blocked()) return
     // Optimistic update
     setBudgets(prev => ({
       ...prev,
@@ -759,6 +788,7 @@ export function AppProvider({ children }) {
   }, [user])
 
   const setSubcategoryBudgetAmount = useCallback(async (monthKey, subcategoryId, amount) => {
+    if (blocked()) return
     // Optimistic update
     setBudgets(prev => ({
       ...prev,
@@ -786,6 +816,7 @@ export function AppProvider({ children }) {
   }, [budgets])
 
   const resetMonthBudget = useCallback(async (monthKey) => {
+    if (blocked()) return
     const { error } = await supabase.from('budget_plans').delete()
       .eq('user_id', user.id).eq('month_key', monthKey)
     if (error) { console.error('Failed to reset month budget:', error); return }
@@ -793,6 +824,7 @@ export function AppProvider({ children }) {
   }, [user])
 
   const copyBudget = useCallback(async (fromKey, toKey) => {
+    if (blocked()) return
     const source = budgets[fromKey]
     if (!source) return
 
@@ -826,6 +858,7 @@ export function AppProvider({ children }) {
   // ── Categories ────────────────────────────────────────────────────────────────
 
   const addCategory = useCallback(async (category) => {
+    if (blocked()) return
     const sortOrder = categories.filter(c => c.type === category.type).length
 
     const { data: row, error } = await supabase
@@ -844,6 +877,7 @@ export function AppProvider({ children }) {
   }, [user, categories])
 
   const updateCategory = useCallback(async (id, updates) => {
+    if (blocked()) return
     const { error } = await supabase
       .from('categories').update({ name: updates.name, color: updates.color })
       .eq('id', id).eq('user_id', user.id) // defense-in-depth: RLS enforces this server-side too
@@ -852,6 +886,7 @@ export function AppProvider({ children }) {
   }, [user])
 
   const deleteCategory = useCallback(async (id) => {
+    if (blocked()) return
     // Subcategories and budget_plans cascade-delete from the DB schema
     const { error } = await supabase.from('categories').delete()
       .eq('id', id).eq('user_id', user.id) // defense-in-depth: RLS enforces this server-side too
@@ -860,6 +895,7 @@ export function AppProvider({ children }) {
   }, [user])
 
   const addSubcategory = useCallback(async (categoryId, name) => {
+    if (blocked()) return
     const category = categories.find(c => c.id === categoryId)
     const sortOrder = category?.subcategories.length ?? 0
 
@@ -877,6 +913,7 @@ export function AppProvider({ children }) {
   }, [user, categories])
 
   const updateSubcategory = useCallback(async (categoryId, subId, name) => {
+    if (blocked()) return
     const { error } = await supabase.from('subcategories').update({ name })
       .eq('id', subId).eq('user_id', user.id) // defense-in-depth: RLS enforces this server-side too
     if (error) { console.error('Failed to update subcategory:', error); return }
@@ -888,6 +925,7 @@ export function AppProvider({ children }) {
   }, [user])
 
   const deleteSubcategory = useCallback(async (categoryId, subId) => {
+    if (blocked()) return
     // budget_plans rows referencing this subcategory cascade-delete
     const { error } = await supabase.from('subcategories').delete()
       .eq('id', subId).eq('user_id', user.id) // defense-in-depth: RLS enforces this server-side too
@@ -900,6 +938,7 @@ export function AppProvider({ children }) {
   }, [user])
 
   const moveCategory = useCallback(async (id, direction) => {
+    if (blocked()) return
     const idx = categories.findIndex(c => c.id === id)
     if (idx === -1) return
     const type = categories[idx].type
@@ -923,6 +962,7 @@ export function AppProvider({ children }) {
   }, [user, categories])
 
   const moveSubcategory = useCallback(async (categoryId, fromSubId, toSubId) => {
+    if (blocked()) return
     setCategories(prev => prev.map(c => {
       if (c.id !== categoryId) return c
       const subs = [...c.subcategories]
@@ -943,6 +983,7 @@ export function AppProvider({ children }) {
   // ── Clear month data ──────────────────────────────────────────────────────────
 
   const clearMonthData = useCallback(async (monthKey) => {
+    if (blocked()) return
     // Deletes all transactions and budget plans for a single month.
     // transaction_splits cascade-delete from the DB schema.
     await supabase.from('transactions').delete()
@@ -964,6 +1005,7 @@ export function AppProvider({ children }) {
   // ── Clear all user data (for account deletion) ────────────────────────────────
 
   const clearAllData = useCallback(async () => {
+    if (blocked()) return
     // Deleting categories cascades to subcategories and budget_plans.
     // Deleting transactions cascades to transaction_splits.
     await Promise.all([
@@ -982,6 +1024,7 @@ export function AppProvider({ children }) {
   // ── Import all data (for Settings restore) ────────────────────────────────────
 
   const importAllData = useCallback(async (backup) => {
+    if (blocked()) return
     // Delete everything for this user; subcategories + budget_plans cascade from categories
     await Promise.all([
       supabase.from('transactions').delete().eq('user_id', user.id),
@@ -1089,6 +1132,7 @@ export function AppProvider({ children }) {
     budgets,
     currentMonthBudget,
     loading,
+    readOnly,
     theme,
     setTheme,
     isDark,
@@ -1127,7 +1171,7 @@ export function AppProvider({ children }) {
   }), [
     currentMonth, setCurrentMonth,
     categories, transactions, currentMonthTransactions,
-    budgets, currentMonthBudget, loading,
+    budgets, currentMonthBudget, loading, readOnly,
     theme, setTheme, isDark,
     recurringRules, paycheckPlans, currentMonthPaycheckPlans,
     addPaycheckPlan, updatePaycheckPlan, deletePaycheckPlan,

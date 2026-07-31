@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { Plus, Pencil, Trash2, Pause, Play, RefreshCw, X } from 'lucide-react'
 import { useApp } from '../context/AppContext'
-import { formatCurrency, formatDate, getTodayString } from '../utils/formatters'
+import { formatSignedCurrency, formatDate, getTodayString } from '../utils/formatters'
+import { disabledCls, readOnlyProps } from '../components/common/ReadOnly'
 import { FREQUENCY_LABELS, getNextOccurrence } from '../utils/recurringUtils'
 
 // ── Rule form modal ────────────────────────────────────────────────────────────
@@ -314,7 +315,7 @@ function RuleModal({ isOpen, onClose, editingRule }) {
 // ── Main Recurring view ────────────────────────────────────────────────────────
 
 export default function Recurring() {
-  const { recurringRules, categories, transactions, pauseRecurringRule, deleteRecurringRule } = useApp()
+  const { recurringRules, categories, transactions, pauseRecurringRule, deleteRecurringRule, readOnly } = useApp()
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editingRule, setEditingRule] = useState(null)
@@ -337,11 +338,13 @@ export default function Recurring() {
     transactions.filter(t => t.recurringRuleId === ruleId && t.isPending).length
 
   const openAdd = () => {
+    if (readOnly) return
     setEditingRule(null)
     setModalOpen(true)
   }
 
   const openEdit = (rule) => {
+    if (readOnly) return
     setEditingRule(rule)
     setModalOpen(true)
   }
@@ -366,8 +369,8 @@ export default function Recurring() {
   return (
     <div className="space-y-4 max-w-3xl">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
           <h1 className="text-lg font-semibold text-slate-800 dark:text-slate-100">Recurring</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
             {recurringRules.length} rule{recurringRules.length !== 1 ? 's' : ''}
@@ -378,27 +381,34 @@ export default function Recurring() {
         </div>
         <button
           onClick={openAdd}
-          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
+          disabled={readOnly}
+          {...readOnlyProps(readOnly, 'Add Rule')}
+          className={`flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors flex-shrink-0 ${disabledCls}`}
         >
           <Plus size={16} />
-          Add Rule
+          <span className="hidden sm:inline">Add Rule</span>
+          <span className="sm:hidden">Add</span>
         </button>
       </div>
 
       {/* Empty state */}
       {recurringRules.length === 0 && (
-        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-12 text-center">
+        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-8 sm:p-12 text-center">
           <RefreshCw size={28} className="mx-auto text-slate-300 dark:text-slate-600 mb-3" />
           <p className="text-slate-500 dark:text-slate-400 text-sm font-medium">No recurring rules yet</p>
-          <p className="text-slate-400 dark:text-slate-500 text-sm mt-1">
-            Add a rule to automatically generate transactions each month.
-          </p>
-          <button
-            onClick={openAdd}
-            className="mt-4 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
-          >
-            Add your first rule
-          </button>
+          {!readOnly && (
+            <>
+              <p className="text-slate-400 dark:text-slate-500 text-sm mt-1">
+                Add a rule to automatically generate transactions each month.
+              </p>
+              <button
+                onClick={openAdd}
+                className="mt-4 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
+              >
+                Add your first rule
+              </button>
+            </>
+          )}
         </div>
       )}
 
@@ -421,7 +431,7 @@ export default function Recurring() {
                     : 'border-slate-200 dark:border-slate-700'
                 }`}
               >
-                <div className="flex items-start gap-3.5 px-5 py-4">
+                <div className="flex items-start gap-3 sm:gap-3.5 px-4 sm:px-5 py-4">
                   {/* Color dot */}
                   <div
                     className="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1.5"
@@ -431,7 +441,7 @@ export default function Recurring() {
                   {/* Main info */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                      <span className="text-sm font-semibold text-slate-800 dark:text-slate-100 break-words">
                         {rule.label}
                       </span>
                       <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
@@ -454,8 +464,8 @@ export default function Recurring() {
                     </div>
 
                     <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
-                      <span className={`text-sm font-medium ${rule.type === 'income' ? 'text-emerald-600' : 'text-slate-700 dark:text-slate-300'}`}>
-                        {rule.type === 'income' ? '+' : '−'}{formatCurrency(rule.amount)}
+                      <span className={`text-sm font-medium whitespace-nowrap tabular-nums ${rule.type === 'income' ? 'text-emerald-600' : 'text-slate-700 dark:text-slate-300'}`}>
+                        {formatSignedCurrency(rule.amount, rule.type)}
                       </span>
                       <span className="text-xs text-slate-400 dark:text-slate-500 flex items-center">
                         {catName}{subName ? ` · ${subName}` : ''}
@@ -466,10 +476,10 @@ export default function Recurring() {
                     </div>
 
                     <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-xs text-slate-400 dark:text-slate-500">
-                      <span>Starts {formatDate(rule.startDate)}</span>
-                      {rule.endDate && <span>· Ends {formatDate(rule.endDate)}</span>}
+                      <span className="whitespace-nowrap">Starts {formatDate(rule.startDate)}</span>
+                      {rule.endDate && <span className="whitespace-nowrap">· Ends {formatDate(rule.endDate)}</span>}
                       {nextDate && !rule.isPaused && (
-                        <span className="text-indigo-500 dark:text-indigo-400">· Next: {formatDate(nextDate)}</span>
+                        <span className="text-indigo-500 dark:text-indigo-400 whitespace-nowrap">· Next: {formatDate(nextDate)}</span>
                       )}
                       {!nextDate && !rule.isPaused && rule.endDate && (
                         <span className="text-slate-400">· Ended</span>
@@ -478,27 +488,30 @@ export default function Recurring() {
                   </div>
 
                   {/* Actions */}
-                  <div className="flex items-center gap-1 flex-shrink-0">
+                  <div className="flex items-center gap-0.5 flex-shrink-0 -mr-1">
                     <button
                       onClick={() => pauseRecurringRule(rule.id, !rule.isPaused)}
-                      title={rule.isPaused ? 'Resume' : 'Pause'}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors"
+                      disabled={readOnly}
+                      {...readOnlyProps(readOnly, rule.isPaused ? 'Resume' : 'Pause')}
+                      className={`p-2 sm:p-1.5 rounded-lg text-slate-400 hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors ${disabledCls}`}
                     >
-                      {rule.isPaused ? <Play size={14} /> : <Pause size={14} />}
+                      {rule.isPaused ? <Play size={15} /> : <Pause size={15} />}
                     </button>
                     <button
                       onClick={() => openEdit(rule)}
-                      title="Edit rule"
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+                      disabled={readOnly}
+                      {...readOnlyProps(readOnly, 'Edit rule')}
+                      className={`p-2 sm:p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors ${disabledCls}`}
                     >
-                      <Pencil size={14} />
+                      <Pencil size={15} />
                     </button>
                     <button
                       onClick={() => setConfirmDeleteId(rule.id)}
-                      title="Delete rule"
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                      disabled={readOnly}
+                      {...readOnlyProps(readOnly, 'Delete rule')}
+                      className={`p-2 sm:p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors ${disabledCls}`}
                     >
-                      <Trash2 size={14} />
+                      <Trash2 size={15} />
                     </button>
                   </div>
                 </div>

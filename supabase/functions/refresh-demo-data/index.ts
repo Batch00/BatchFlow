@@ -12,6 +12,12 @@ function respond(body: unknown): Response {
   })
 }
 
+// Manual trigger for the demo account's monthly top-up.
+//
+// This does NOT wipe anything: ensure_demo_data() only backfills months that are
+// missing from the trailing window and prunes past the retention window. pg_cron
+// runs the same function on the 1st of each month; this endpoint exists so the
+// admin can force a top-up without waiting (e.g. right after deploying).
 Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -30,7 +36,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
     if (!serviceRoleKey) return respond({ error: 'SUPABASE_SERVICE_ROLE_KEY is not available in the function environment' })
 
-    // 4. Build admin client with service role key
+    // 4. Build admin client with service role key. auth.uid() is NULL for this
+    //    client, so the demo read-only triggers do not block the generator.
     const adminClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       serviceRoleKey,
@@ -43,12 +50,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (userError || !caller) return respond({ error: 'Invalid or expired session' })
     if (caller.email !== adminEmail) return respond({ error: 'Forbidden' })
 
-    // 6. Invoke the reset_demo_data() Postgres function
-    //    This function handles the full delete + re-seed atomically.
-    const { error: rpcError } = await adminClient.rpc('reset_demo_data')
+    // 6. Top up any missing months and prune expired ones
+    const { data, error: rpcError } = await adminClient.rpc('ensure_demo_data')
     if (rpcError) return respond({ error: rpcError.message })
 
-    return respond({ success: true, resetAt: new Date().toISOString() })
+    return respond({ success: true, result: data, refreshedAt: new Date().toISOString() })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Internal server error'
     return respond({ error: message })

@@ -15,7 +15,8 @@ function isVisiblePending(t, tomorrowStr) {
   return scheduledDate <= tomorrowStr
 }
 import { useApp } from '../context/AppContext'
-import { formatCurrency, formatDate, formatMonthLabel } from '../utils/formatters'
+import { formatCurrency, formatSignedCurrency, formatDate, formatMonthLabel } from '../utils/formatters'
+import { disabledCls, readOnlyProps } from '../components/common/ReadOnly'
 import {
   getCategorySpent,
   getCategoryEffectivePlanned,
@@ -33,13 +34,15 @@ function SummaryCard({ icon: Icon, label, amount, subtitle, colorClass }) {
   return (
     <div className="bg-white dark:bg-slate-800 rounded-xl p-4 sm:p-5 shadow-sm border border-slate-200 dark:border-slate-700">
       <div className="flex items-start justify-between gap-2 mb-1">
-        <p className="text-sm text-slate-500 dark:text-slate-400">{label}</p>
+        <p className="text-sm text-slate-500 dark:text-slate-400 min-w-0 truncate">{label}</p>
         <div className={`flex-shrink-0 p-2 rounded-lg ${colorClass}`}>
           <Icon size={16} />
         </div>
       </div>
-      <p className="text-xl sm:text-2xl font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatCurrency(amount)}</p>
-      {subtitle && <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{subtitle}</p>}
+      <p className="text-lg sm:text-2xl font-bold text-slate-800 dark:text-slate-100 tabular-nums whitespace-nowrap overflow-hidden text-ellipsis">
+        {formatCurrency(amount)}
+      </p>
+      {subtitle && <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5 truncate">{subtitle}</p>}
     </div>
   )
 }
@@ -67,21 +70,21 @@ function CategoryCard({ category, confirmedTransactions, pendingTransactions, mo
   return (
     <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
       {/* Category header */}
-      <div className="p-5">
-        <div className="flex items-center justify-between mb-3">
+      <div className="p-4 sm:p-5">
+        <div className="flex items-center justify-between gap-2 mb-3">
           <button
             onClick={() => hasSubcategories && setExpanded(e => !e)}
-            className={`flex items-center gap-2 text-left ${hasSubcategories ? 'cursor-pointer' : 'cursor-default'}`}
+            className={`flex items-center gap-2 text-left min-w-0 py-1 -my-1 ${hasSubcategories ? 'cursor-pointer' : 'cursor-default'}`}
           >
             <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: category.color }} />
-            <h3 className="text-sm font-medium text-slate-800 dark:text-slate-100">{category.name}</h3>
+            <h3 className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">{category.name}</h3>
             {hasSubcategories && (
-              <span className="text-slate-400">
+              <span className="text-slate-400 flex-shrink-0">
                 {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
               </span>
             )}
           </button>
-          <div className="text-right">
+          <div className="text-right flex-shrink-0 whitespace-nowrap tabular-nums">
             <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">{formatCurrency(spent)}</span>
             <span className="text-xs text-slate-400 dark:text-slate-500 ml-1">/ {formatCurrency(planned)}</span>
           </div>
@@ -91,19 +94,19 @@ function CategoryCard({ category, confirmedTransactions, pendingTransactions, mo
 
       {/* Subcategory breakdown (expanded) */}
       {expanded && visibleSubcategories.length > 0 && (
-        <div className="border-t border-slate-100 dark:border-slate-700 px-5 py-3 space-y-3">
+        <div className="border-t border-slate-100 dark:border-slate-700 px-4 sm:px-5 py-3 space-y-3">
           {visibleSubcategories.map(sub => {
             const subSpent   = getSubcategorySpent(confirmedTransactions, sub.id)
             const subPending = getSubcategorySpent(pendingTransactions,   sub.id)
             const subPlanned = getSubcategoryPlanned(monthBudget, sub.id)
             return (
               <div key={sub.id}>
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-                    <span className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600 inline-block" />
-                    {sub.name}
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <span className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5 min-w-0">
+                    <span className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600 inline-block flex-shrink-0" />
+                    <span className="truncate">{sub.name}</span>
                   </span>
-                  <span className="text-xs">
+                  <span className="text-xs flex-shrink-0 whitespace-nowrap tabular-nums">
                     <span className="font-medium text-slate-700 dark:text-slate-300">{formatCurrency(subSpent)}</span>
                     <span className="text-slate-400 dark:text-slate-500 ml-1">/ {formatCurrency(subPlanned)}</span>
                   </span>
@@ -127,6 +130,7 @@ export default function Dashboard() {
     budgets,
     copyBudget,
     refreshTransactions,
+    readOnly,
   } = useApp()
 
   const navigate = useNavigate()
@@ -194,6 +198,19 @@ export default function Dashboard() {
 
   // Show the friendly empty state when no budget and no transactions exist for this month
   if (isUninitialized) {
+    // A read-only account can't set up a budget, so point it at a month that has data
+    if (readOnly) {
+      return (
+        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-8 text-center">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            Nothing recorded for {formatMonthLabel(currentMonth)}.
+          </p>
+          <p className="text-sm text-slate-400 dark:text-slate-500 mt-1">
+            Use the month selector to browse a month with data.
+          </p>
+        </div>
+      )
+    }
     return (
       <>
         <BudgetEmptyState
@@ -262,11 +279,11 @@ export default function Dashboard() {
         </div>
       ) : unbudgeted > 0.01 ? (
         <div className="rounded-xl p-4 text-sm font-medium bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300">
-          You have {formatCurrency(unbudgeted)} left to budget. Head to Budget to assign it.
+          You have <span className="whitespace-nowrap">{formatCurrency(unbudgeted)}</span> left to budget. Head to Budget to assign it.
         </div>
       ) : unbudgeted < -0.01 ? (
         <div className="rounded-xl p-4 text-sm font-medium bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-300">
-          You've over-allocated {formatCurrency(Math.abs(unbudgeted))} beyond your planned income.
+          You've over-allocated <span className="whitespace-nowrap">{formatCurrency(Math.abs(unbudgeted))}</span> beyond your planned income.
         </div>
       ) : null}
 
@@ -311,10 +328,14 @@ export default function Dashboard() {
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Recent Activity</h3>
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-400 dark:text-slate-500 hidden sm:inline">What did you spend today?</span>
+            {!readOnly && (
+              <span className="text-xs text-slate-400 dark:text-slate-500 hidden sm:inline">What did you spend today?</span>
+            )}
             <button
-              onClick={() => setModalOpen(true)}
-              className="flex items-center gap-1 px-2.5 py-1 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 text-xs font-medium rounded-lg hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors"
+              onClick={() => { if (!readOnly) setModalOpen(true) }}
+              disabled={readOnly}
+              {...readOnlyProps(readOnly, 'Log a transaction')}
+              className={`flex items-center gap-1 px-2.5 py-1.5 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 text-xs font-medium rounded-lg hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors ${disabledCls}`}
             >
               <Plus size={12} />
               Log it
@@ -348,10 +369,10 @@ export default function Dashboard() {
                         <div className="w-2 h-2 rounded-full flex-shrink-0 opacity-60" style={{ backgroundColor: color }} />
                         <div className="flex-1 min-w-0">
                           <p className="text-sm text-slate-500 dark:text-slate-400 truncate italic">{label}</p>
-                          <p className="text-xs text-slate-400 dark:text-slate-500">{formatDate(t.date)}</p>
+                          <p className="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">{formatDate(t.date)}</p>
                         </div>
-                        <span className={`text-sm font-medium flex-shrink-0 tabular-nums italic ${isIncome ? 'text-emerald-500 opacity-70' : 'text-slate-400 dark:text-slate-500'}`}>
-                          {isIncome ? '+' : '−'}{formatCurrency(t.amount)}
+                        <span className={`text-sm font-medium flex-shrink-0 tabular-nums whitespace-nowrap italic ${isIncome ? 'text-emerald-500 opacity-70' : 'text-slate-400 dark:text-slate-500'}`}>
+                          {formatSignedCurrency(t.amount, t.type)}
                         </span>
                       </div>
                     )
@@ -387,10 +408,10 @@ export default function Dashboard() {
                         <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
                         <div className="flex-1 min-w-0">
                           <p className="text-sm text-slate-800 dark:text-slate-100 truncate">{label}</p>
-                          <p className="text-xs text-slate-400 dark:text-slate-500">{formatDate(t.date)}</p>
+                          <p className="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">{formatDate(t.date)}</p>
                         </div>
-                        <span className={`text-sm font-semibold flex-shrink-0 tabular-nums ${isIncome ? 'text-emerald-600' : 'text-slate-800 dark:text-slate-100'}`}>
-                          {isIncome ? '+' : '−'}{formatCurrency(t.amount)}
+                        <span className={`text-sm font-semibold flex-shrink-0 tabular-nums whitespace-nowrap ${isIncome ? 'text-emerald-600' : 'text-slate-800 dark:text-slate-100'}`}>
+                          {formatSignedCurrency(t.amount, t.type)}
                         </span>
                       </div>
                     )
@@ -403,13 +424,15 @@ export default function Dashboard() {
       </section>
 
       {/* FAB — fixed to viewport bottom-right */}
-      <button
-        onClick={() => setModalOpen(true)}
-        className="fixed bottom-6 right-6 z-40 w-14 h-14 bg-indigo-600 text-white rounded-full shadow-lg hover:bg-indigo-700 active:bg-indigo-800 transition-colors flex items-center justify-center"
-        title="Add Transaction"
-      >
-        <Plus size={24} />
-      </button>
+      {!readOnly && (
+        <button
+          onClick={() => setModalOpen(true)}
+          className="fixed bottom-6 right-6 z-40 w-14 h-14 bg-indigo-600 text-white rounded-full shadow-lg hover:bg-indigo-700 active:bg-indigo-800 transition-colors flex items-center justify-center"
+          title="Add Transaction"
+        >
+          <Plus size={24} />
+        </button>
+      )}
 
       <TransactionModal isOpen={modalOpen} onClose={() => setModalOpen(false)} />
     </div>

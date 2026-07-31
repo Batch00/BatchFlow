@@ -44,6 +44,23 @@ function pct(value, total) {
 
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
+// Recharts takes axis widths as fixed numbers, so charts need to know about the
+// viewport to avoid the category axis eating most of a narrow screen.
+function useIsNarrow(breakpoint = 640) {
+  const query = `(max-width: ${breakpoint - 1}px)`
+  const [narrow, setNarrow] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia(query).matches
+  )
+  useEffect(() => {
+    const mql = window.matchMedia(query)
+    const onChange = e => setNarrow(e.matches)
+    mql.addEventListener('change', onChange)
+    setNarrow(mql.matches)
+    return () => mql.removeEventListener('change', onChange)
+  }, [query])
+  return narrow
+}
+
 // ── Persistent filter helpers ──────────────────────────────────────────────────
 
 function getLastNMonthsFrom(n, referenceKey) {
@@ -152,13 +169,13 @@ function EmptyChart({ message = 'No data for this period.' }) {
 
 function SectionCard({ title, subtitle, action, children }) {
   return (
-    <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-5">
-      <div className="flex items-start justify-between gap-3 mb-4">
-        <div>
+    <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-4 sm:p-5">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 sm:gap-3 mb-4">
+        <div className="min-w-0">
           <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">{title}</h3>
           {subtitle && <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{subtitle}</p>}
         </div>
-        {action}
+        {action && <div className="flex-shrink-0">{action}</div>}
       </div>
       {children}
     </div>
@@ -179,7 +196,7 @@ function Tab({ label, active, onClick }) {
 function ToggleButton({ label, active, onClick }) {
   return (
     <button onClick={onClick}
-      className={`px-3 py-1 text-xs font-medium rounded-lg transition-colors ${
+      className={`px-3 py-2 sm:py-1 text-xs font-medium rounded-lg transition-colors ${
         active ? 'bg-slate-700 dark:bg-slate-200 text-white dark:text-slate-900' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-600'
       }`}>
       {label}
@@ -208,9 +225,10 @@ function EfficiencyGauge({ score }) {
 
 // ── MonthView ─────────────────────────────────────────────────────────────────
 
-function MonthView({ categories, transactions, budget, budgets, isDark, donutMode, setDonutMode, showPct, setShowPct }) {
+function MonthView({ categories, transactions, allTransactions, currentMonth, budget, budgets, isDark, donutMode, setDonutMode, showPct, setShowPct }) {
   const [expandedCatId, setExpandedCatId] = useState(null) // category history
   const [drillCatId, setDrillCatId] = useState(null) // subcategory drill-down
+  const isNarrow = useIsNarrow()
 
   const expenseCategories = categories.filter(c => c.type === 'expense')
   const actualIncome = getTotalByType(transactions, 'income')
@@ -249,9 +267,10 @@ function MonthView({ categories, transactions, budget, budgets, isDark, donutMod
   const donutTotal = donutData.reduce((s, d) => s + d.value, 0)
 
   // Planned vs actual bar
+  const nameCap = isNarrow ? 11 : 14
   const barData = categoryData.map(d => ({
     id: d.id,
-    name: d.name.length > 14 ? d.name.slice(0, 13) + '…' : d.name,
+    name: d.name.length > nameCap ? d.name.slice(0, nameCap - 1) + '…' : d.name,
     fullName: d.name,
     Planned: showPct ? pct(d.planned, actualIncome) : d.planned,
     Actual: showPct ? pct(d.spent, actualIncome) : d.spent,
@@ -266,17 +285,32 @@ function MonthView({ categories, transactions, budget, budgets, isDark, donutMod
     return scores.reduce((s, v) => s + v, 0) / scores.length
   }, [categoryData])
 
-  // Category history (last 6 months) for clicked category
-  const historyMonths = useMemo(() => getLastNMonths(6), [])
-  const expandedCat = categoryData.find(d => d.id === expandedCatId)
+  // Category history — the 6 months ending at the month currently being viewed.
+  // This needs every month's transactions, not just the current month's, so it reads
+  // from `allTransactions` (confirmed only, to match every other chart).
+  const historyMonths = useMemo(() => getLastNMonthsFrom(6, currentMonth), [currentMonth])
+
+  const confirmedAll = useMemo(
+    () => (allTransactions ?? []).filter(t => !t.isPending),
+    [allTransactions]
+  )
+
+  const expandedCat = categories.find(c => c.id === expandedCatId)
+
   const historyData = useMemo(() => {
-    if (!expandedCatId) return []
+    if (!expandedCat) return []
     return historyMonths.map(key => {
-      const monthTxns = transactions // note: we have all-time transactions via prop
-      // We only have confirmed month txns here; history uses allTransactions passed from parent
-      return { label: shortMonth(key), key }
+      const monthTxns = confirmedAll.filter(t => t.date?.startsWith(key))
+      return {
+        key,
+        label: shortMonth(key),
+        Actual: getCategorySpent(monthTxns, expandedCat.id),
+        Planned: getCategoryEffectivePlanned(expandedCat, budgets?.[key] ?? {}),
+      }
     })
-  }, [expandedCatId, historyMonths, transactions])
+  }, [expandedCat, historyMonths, confirmedAll, budgets])
+
+  const historyHasData = historyData.some(d => d.Actual > 0 || d.Planned > 0)
 
   // Drill-down: subcategory data for clicked category
   const drillCat = categoryData.find(d => d.id === drillCatId)
@@ -322,8 +356,8 @@ function MonthView({ categories, transactions, budget, budgets, isDark, donutMod
           {donutData.length === 0 ? (
             <EmptyChart message={donutMode === 'actual' ? 'No expenses logged this month.' : 'No budget amounts set.'} />
           ) : (
-            <div className="flex gap-4">
-              <div className="w-44 h-44 flex-shrink-0">
+            <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4">
+              <div className="w-40 h-40 sm:w-44 sm:h-44 flex-shrink-0">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie data={donutData} cx="50%" cy="50%" innerRadius="52%" outerRadius="80%"
@@ -334,14 +368,14 @@ function MonthView({ categories, transactions, budget, budgets, isDark, donutMod
                   </PieChart>
                 </ResponsiveContainer>
               </div>
-              <div className="flex-1 min-w-0 py-1 space-y-1.5">
+              <div className="w-full sm:flex-1 min-w-0 py-1 space-y-1.5">
                 {donutData.map(d => (
-                  <div key={d.id} className="flex items-center justify-between text-xs">
-                    <span className="flex items-center gap-1.5 text-slate-600 dark:text-slate-300 truncate mr-2">
+                  <div key={d.id} className="flex items-center justify-between gap-2 text-xs">
+                    <span className="flex items-center gap-1.5 text-slate-600 dark:text-slate-300 min-w-0">
                       <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: d.color }} />
-                      {d.name}
+                      <span className="truncate">{d.name}</span>
                     </span>
-                    <span className="font-medium text-slate-700 dark:text-slate-300 flex-shrink-0">
+                    <span className="font-medium text-slate-700 dark:text-slate-300 flex-shrink-0 tabular-nums">
                       {showPct ? `${pct(d.value, actualIncome)}%` : `${d.pct}%`}
                     </span>
                   </div>
@@ -362,7 +396,7 @@ function MonthView({ categories, transactions, budget, budgets, isDark, donutMod
                 return (
                   <div key={d.id}>
                     <button
-                      className="w-full text-left"
+                      className="w-full text-left py-1"
                       onClick={() => setExpandedCatId(isExpanded ? null : d.id)}
                     >
                       <div className="flex items-center justify-between mb-1">
@@ -384,6 +418,33 @@ function MonthView({ categories, transactions, budget, budgets, isDark, donutMod
                           style={{ width: `${Math.min(100, actualExpenses > 0 ? (d.spent / actualExpenses) * 100 : 0)}%`, backgroundColor: d.color }} />
                       </div>
                     </button>
+
+                    {/* 6-month history for the clicked category */}
+                    {isExpanded && (
+                      <div className="mt-3 mb-1 pl-1 pr-1 border-l-2" style={{ borderColor: d.color }}>
+                        {!historyHasData ? (
+                          <p className="text-xs text-slate-400 dark:text-slate-500 pl-3 py-3">
+                            No history for {d.name} in the last 6 months.
+                          </p>
+                        ) : (
+                          <div style={{ height: 150 }} className="pl-1">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <LineChart data={historyData} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#334155' : '#f1f5f9'} vertical={false} />
+                                <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                                <YAxis tickFormatter={shortCurrency} tick={{ fontSize: 10, fill: '#94a3b8' }}
+                                  axisLine={false} tickLine={false} width={46} />
+                                <Tooltip content={<CurrencyTooltip isDark={isDark} />} />
+                                <Line type="monotone" dataKey="Actual" stroke={d.color} strokeWidth={2.5}
+                                  dot={{ r: 3, fill: d.color, strokeWidth: 0 }} activeDot={{ r: 5, strokeWidth: 0 }} />
+                                <Line type="monotone" dataKey="Planned" stroke={d.color} strokeWidth={1.5}
+                                  strokeDasharray="5 3" strokeOpacity={0.5} dot={false} />
+                              </LineChart>
+                            </ResponsiveContainer>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )
               })}
@@ -412,8 +473,8 @@ function MonthView({ categories, transactions, budget, budgets, isDark, donutMod
                   <CartesianGrid horizontal={false} strokeDasharray="3 3" stroke={isDark ? '#334155' : '#f1f5f9'} />
                   <XAxis type="number" tickFormatter={showPct ? v => `${v}%` : shortCurrency}
                     tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                  <YAxis type="category" dataKey="name" width={100}
-                    tick={{ fontSize: 12, fill: isDark ? '#94a3b8' : '#475569', cursor: 'pointer' }}
+                  <YAxis type="category" dataKey="name" width={isNarrow ? 76 : 100}
+                    tick={{ fontSize: isNarrow ? 10 : 12, fill: isDark ? '#94a3b8' : '#475569', cursor: 'pointer' }}
                     axisLine={false} tickLine={false} />
                   <Tooltip content={showPct
                     ? ({ active, payload, label }) => {
@@ -459,8 +520,8 @@ function MonthView({ categories, transactions, budget, budgets, isDark, donutMod
                       <CartesianGrid horizontal={false} strokeDasharray="3 3" stroke={isDark ? '#334155' : '#f1f5f9'} />
                       <XAxis type="number" tickFormatter={showPct ? v => `${v}%` : shortCurrency}
                         tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                      <YAxis type="category" dataKey="name" width={110}
-                        tick={{ fontSize: 11, fill: isDark ? '#94a3b8' : '#475569' }}
+                      <YAxis type="category" dataKey="name" width={isNarrow ? 80 : 110}
+                        tick={{ fontSize: isNarrow ? 10 : 11, fill: isDark ? '#94a3b8' : '#475569' }}
                         axisLine={false} tickLine={false} />
                       <Tooltip content={showPct ? undefined : <CurrencyTooltip isDark={isDark} />} />
                       <Bar dataKey="Planned" fill="#e0e7ff" radius={[0, 3, 3, 0]} />
@@ -484,7 +545,7 @@ function MonthView({ categories, transactions, budget, budgets, isDark, donutMod
       {efficiencyScore !== null && (
         <SectionCard title="Budget Efficiency"
           subtitle="How accurately you followed your plan this month — spending close to (but not over) budget scores highest">
-          <div className="flex items-center gap-6">
+          <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 sm:gap-6">
             <EfficiencyGauge score={efficiencyScore} />
             <div className="space-y-1.5 text-sm">
               <p className={`font-semibold ${efficiencyScore >= 80 ? 'text-emerald-600' : efficiencyScore >= 60 ? 'text-amber-600' : 'text-red-500'}`}>
@@ -750,6 +811,7 @@ function TrendsView({ categories, allTransactions, budgets, isDark, dateFrom, se
 
 function ActivityView({ categories, allTransactions, isDark }) {
   const months12 = useMemo(() => getLastNMonths(12), [])
+  const isNarrow = useIsNarrow()
 
   const confirmedTxns = useMemo(
     () => allTransactions.filter(t => !t.isPending),
@@ -795,8 +857,9 @@ function ActivityView({ categories, allTransactions, isDark }) {
           )
         )
         const total = getCategorySpent(confirmedTxns.filter(t => t.type === 'expense'), cat.id)
+        const cap = isNarrow ? 11 : 14
         return {
-          name: cat.name.length > 14 ? cat.name.slice(0, 13) + '…' : cat.name,
+          name: cat.name.length > cap ? cat.name.slice(0, cap - 1) + '…' : cat.name,
           color: cat.color,
           avg: catTxns.length > 0 ? total / catTxns.length : 0,
           count: catTxns.length,
@@ -804,7 +867,7 @@ function ActivityView({ categories, allTransactions, isDark }) {
       })
       .filter(d => d.count > 0)
       .sort((a, b) => b.avg - a.avg)
-  }, [expenseCategories, confirmedTxns])
+  }, [expenseCategories, confirmedTxns, isNarrow])
 
   const hasAvgData = avgData.length > 0
 
@@ -866,13 +929,13 @@ function ActivityView({ categories, allTransactions, isDark }) {
           <div style={{ height: Math.max(180, avgData.length * 44) }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart layout="vertical" data={avgData}
-                margin={{ top: 0, right: 70, bottom: 0, left: 0 }}
+                margin={{ top: 0, right: isNarrow ? 46 : 70, bottom: 0, left: 0 }}
                 barCategoryGap="35%">
                 <CartesianGrid horizontal={false} strokeDasharray="3 3" stroke={isDark ? '#334155' : '#f1f5f9'} />
                 <XAxis type="number" tickFormatter={shortCurrency}
-                  tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                <YAxis type="category" dataKey="name" width={110}
-                  tick={{ fontSize: 12, fill: isDark ? '#94a3b8' : '#475569' }}
+                  tick={{ fontSize: isNarrow ? 10 : 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                <YAxis type="category" dataKey="name" width={isNarrow ? 80 : 110}
+                  tick={{ fontSize: isNarrow ? 10 : 12, fill: isDark ? '#94a3b8' : '#475569' }}
                   axisLine={false} tickLine={false} />
                 <Tooltip content={({ active, payload, label }) => {
                   if (!active || !payload?.length) return null
@@ -1379,6 +1442,8 @@ export default function Analytics() {
         <MonthView
           categories={categories}
           transactions={confirmedMonthTransactions}
+          allTransactions={transactions}
+          currentMonth={currentMonth}
           budget={currentMonthBudget}
           budgets={budgets}
           isDark={isDark}

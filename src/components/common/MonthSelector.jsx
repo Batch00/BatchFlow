@@ -22,27 +22,27 @@ export default function MonthSelector() {
       <div className="flex items-center justify-between">
         <button
           onClick={() => navigate(-1)}
-          className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+          className="p-2.5 -m-1 rounded-md text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
           aria-label="Previous month"
         >
-          <ChevronLeft size={15} />
+          <ChevronLeft size={16} />
         </button>
         <span className="text-sm font-medium text-white select-none">
           {formatMonthLabel(currentMonth)}
         </span>
         <button
           onClick={() => navigate(1)}
-          className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+          className="p-2.5 -m-1 rounded-md text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
           aria-label="Next month"
         >
-          <ChevronRight size={15} />
+          <ChevronRight size={16} />
         </button>
       </div>
       {!isCurrentMonth && (
         <div className="flex justify-center mt-1">
           <button
             onClick={() => setCurrentMonth(todayKey)}
-            className="text-xs text-slate-400 hover:text-white transition-colors px-2 py-0.5 rounded hover:bg-slate-700"
+            className="text-xs text-slate-400 hover:text-white transition-colors px-3 py-1.5 rounded hover:bg-slate-700"
           >
             Today
           </button>
