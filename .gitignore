@@ -22,6 +22,9 @@ dist/
 .DS_Store
 Thumbs.db
 
+# Supabase CLI local state (machine-specific link/session files)
+supabase/.temp/
+
 # Logs
 npm-debug.log*
 yarn-debug.log*
