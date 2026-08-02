@@ -312,6 +312,23 @@ function RuleModal({ isOpen, onClose, editingRule }) {
   )
 }
 
+// Meta line — wraps onto as many lines as it needs and never truncates. Each part
+// is kept whole so a date or a category never splits across the wrap point.
+function MetaLine({ parts, className = '' }) {
+  const shown = parts.filter(Boolean)
+  if (shown.length === 0) return null
+  return (
+    <p className={`mt-0.5 text-xs text-slate-400 dark:text-slate-500 leading-snug ${className}`}>
+      {shown.map((part, i) => (
+        <span key={i}>
+          {i > 0 && <span className="mx-0.5 text-slate-300 dark:text-slate-600">·</span>}
+          {part}
+        </span>
+      ))}
+    </p>
+  )
+}
+
 // ── Main Recurring view ────────────────────────────────────────────────────────
 
 export default function Recurring() {
@@ -431,60 +448,56 @@ export default function Recurring() {
                     : 'border-slate-200 dark:border-slate-700'
                 }`}
               >
-                <div className="flex items-start gap-3 sm:gap-3.5 px-4 sm:px-5 py-4">
-                  {/* Color dot */}
+                <div className="flex items-start gap-3 px-4 sm:px-5 py-3">
+                  {/* Color dot — aligned to the label, which is the row's identity,
+                      rather than floating beside the middle of the meta text */}
                   <div
                     className="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1.5"
                     style={{ backgroundColor: catColor }}
                   />
 
-                  {/* Main info */}
+                  {/* Main info — label on its own line so it always has room, then two
+                      meta lines that wrap freely. Nothing here truncates. */}
                   <div className="flex-1 min-w-0">
+                    {/* The amount deliberately leads the meta line rather than sitting
+                        beside the label: pairing it with the label forces longer labels
+                        ("401k Contribution", "Paycheck (15th)") to wrap at 360px, which
+                        measured taller overall than letting the amount flow here. */}
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-semibold text-slate-800 dark:text-slate-100 break-words">
                         {rule.label}
                       </span>
-                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                        rule.type === 'income'
-                          ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400'
-                          : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400'
-                      }`}>
-                        {FREQUENCY_LABELS[rule.frequency]}
-                      </span>
                       {rule.isPaused && (
-                        <span className="text-xs font-medium bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded-full">
+                        <span className="text-xs font-medium bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded-full flex-shrink-0">
                           Paused
                         </span>
                       )}
-                      {pendingCount > 0 && (
-                        <span className="text-xs text-slate-400 dark:text-slate-500">
-                          {pendingCount} pending
-                        </span>
-                      )}
                     </div>
 
-                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
-                      <span className={`text-sm font-medium whitespace-nowrap tabular-nums ${rule.type === 'income' ? 'text-emerald-600' : 'text-slate-700 dark:text-slate-300'}`}>
+                    <MetaLine parts={[
+                      <span className={`font-medium whitespace-nowrap tabular-nums ${rule.type === 'income' ? 'text-emerald-600' : 'text-slate-600 dark:text-slate-300'}`}>
                         {formatSignedCurrency(rule.amount, rule.type)}
-                      </span>
-                      <span className="text-xs text-slate-400 dark:text-slate-500 flex items-center">
-                        {catName}{subName ? ` · ${subName}` : ''}
-                      </span>
-                      {rule.merchant && (
-                        <span className="text-xs text-slate-400 dark:text-slate-500">{rule.merchant}</span>
-                      )}
-                    </div>
+                      </span>,
+                      <span className="whitespace-nowrap">{FREQUENCY_LABELS[rule.frequency]}</span>,
+                      <span>{catName}{subName ? ` · ${subName}` : ''}</span>,
+                      // Most rules name the merchant the same as the label; only worth
+                      // a slot when it actually says something new.
+                      rule.merchant && rule.merchant.toLowerCase() !== rule.label.toLowerCase()
+                        ? <span>{rule.merchant}</span>
+                        : null,
+                    ]} />
 
-                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-xs text-slate-400 dark:text-slate-500">
-                      <span className="whitespace-nowrap">Starts {formatDate(rule.startDate)}</span>
-                      {rule.endDate && <span className="whitespace-nowrap">· Ends {formatDate(rule.endDate)}</span>}
-                      {nextDate && !rule.isPaused && (
-                        <span className="text-indigo-500 dark:text-indigo-400 whitespace-nowrap">· Next: {formatDate(nextDate)}</span>
-                      )}
-                      {!nextDate && !rule.isPaused && rule.endDate && (
-                        <span className="text-slate-400">· Ended</span>
-                      )}
-                    </div>
+                    <MetaLine parts={[
+                      nextDate && !rule.isPaused
+                        ? <span className="text-indigo-500 dark:text-indigo-400 whitespace-nowrap">Next {formatDate(nextDate)}</span>
+                        : null,
+                      !nextDate && !rule.isPaused && rule.endDate
+                        ? <span className="whitespace-nowrap">Ended</span>
+                        : null,
+                      <span className="whitespace-nowrap">Starts {formatDate(rule.startDate)}</span>,
+                      rule.endDate ? <span className="whitespace-nowrap">Ends {formatDate(rule.endDate)}</span> : null,
+                      pendingCount > 0 ? <span className="whitespace-nowrap">{pendingCount} pending</span> : null,
+                    ]} />
                   </div>
 
                   {/* Actions */}
