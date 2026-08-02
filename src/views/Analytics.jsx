@@ -8,7 +8,7 @@ import {
 } from 'recharts'
 import { TrendingUp, TrendingDown, Wallet, Hash, X, ChevronDown, ChevronRight, Target, Search, ArrowUpDown, ArrowUp, ArrowDown, RotateCcw } from 'lucide-react'
 import { useApp } from '../context/AppContext'
-import { formatCurrency, formatMonthLabel, getMonthKey } from '../utils/formatters'
+import { formatCurrency, formatSignedCurrency, formatMonthLabel, getMonthKey } from '../utils/formatters'
 import { loadData, saveData } from '../utils/storage'
 import {
   getCategorySpent, getCategoryEffectivePlanned,
@@ -356,8 +356,8 @@ function MonthView({ categories, transactions, allTransactions, currentMonth, bu
           {donutData.length === 0 ? (
             <EmptyChart message={donutMode === 'actual' ? 'No expenses logged this month.' : 'No budget amounts set.'} />
           ) : (
-            <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4">
-              <div className="w-40 h-40 sm:w-44 sm:h-44 flex-shrink-0">
+            <div className="flex gap-4">
+              <div className="w-44 h-44 flex-shrink-0">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie data={donutData} cx="50%" cy="50%" innerRadius="52%" outerRadius="80%"
@@ -368,7 +368,7 @@ function MonthView({ categories, transactions, allTransactions, currentMonth, bu
                   </PieChart>
                 </ResponsiveContainer>
               </div>
-              <div className="w-full sm:flex-1 min-w-0 py-1 space-y-1.5">
+              <div className="flex-1 min-w-0 py-1 space-y-1.5">
                 {donutData.map(d => (
                   <div key={d.id} className="flex items-center justify-between gap-2 text-xs">
                     <span className="flex items-center gap-1.5 text-slate-600 dark:text-slate-300 min-w-0">
@@ -764,39 +764,44 @@ function TrendsView({ categories, allTransactions, budgets, isDark, dateFrom, se
 
       {/* Monthly summary table */}
       <SectionCard title="Monthly Summary" subtitle="Income, expenses, savings rate">
+        {/* Seven columns cannot fit a phone. The min-width keeps every figure whole
+            and lets the wrapper scroll, rather than compressing columns until the
+            amounts wrap onto two lines. */}
         <div className="overflow-x-auto -mx-1">
-          <table className="w-full text-xs">
+          <table className="w-full text-xs min-w-[560px]">
             <thead>
               <tr className="border-b border-slate-100 dark:border-slate-700">
-                <th className="text-left py-2 px-1 font-semibold text-slate-500 dark:text-slate-400">Month</th>
-                <th className="text-right py-2 px-1 font-semibold text-slate-500 dark:text-slate-400">Income</th>
-                <th className="text-right py-2 px-1 font-semibold text-slate-500 dark:text-slate-400">Expenses</th>
-                <th className="text-right py-2 px-1 font-semibold text-slate-500 dark:text-slate-400">Planned</th>
-                <th className="text-right py-2 px-1 font-semibold text-slate-500 dark:text-slate-400">Net</th>
-                <th className="text-right py-2 px-1 font-semibold text-slate-500 dark:text-slate-400">Savings</th>
-                <th className="text-right py-2 px-1 font-semibold text-slate-500 dark:text-slate-400">Txns</th>
+                <th className="text-left py-2 px-1 font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap">Month</th>
+                <th className="text-right py-2 px-1 font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap">Income</th>
+                <th className="text-right py-2 px-1 font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap">Expenses</th>
+                <th className="text-right py-2 px-1 font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap">Planned</th>
+                <th className="text-right py-2 px-1 font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap">Net</th>
+                <th className="text-right py-2 px-1 font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap">Savings</th>
+                <th className="text-right py-2 px-1 font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap">Txns</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50 dark:divide-slate-700">
               {[...trendData].reverse().map(row => (
                 <tr key={row.key} className="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
-                  <td className="py-2.5 px-1 font-medium text-slate-700 dark:text-slate-300">{row.fullLabel}</td>
-                  <td className="py-2.5 px-1 text-right text-emerald-600 font-medium">
+                  <td className="py-2.5 px-1 font-medium text-slate-700 dark:text-slate-300 whitespace-nowrap">{row.fullLabel}</td>
+                  <td className="py-2.5 px-1 text-right text-emerald-600 font-medium whitespace-nowrap tabular-nums">
                     {row.Income > 0 ? formatCurrency(row.Income) : <span className="text-slate-300 dark:text-slate-600">—</span>}
                   </td>
-                  <td className="py-2.5 px-1 text-right text-slate-700 dark:text-slate-300">
+                  <td className="py-2.5 px-1 text-right text-slate-700 dark:text-slate-300 whitespace-nowrap tabular-nums">
                     {row.Expenses > 0 ? formatCurrency(row.Expenses) : <span className="text-slate-300 dark:text-slate-600">—</span>}
                   </td>
-                  <td className="py-2.5 px-1 text-right text-slate-400 dark:text-slate-500">
+                  <td className="py-2.5 px-1 text-right text-slate-400 dark:text-slate-500 whitespace-nowrap tabular-nums">
                     {row.Planned > 0 ? formatCurrency(row.Planned) : <span className="text-slate-300 dark:text-slate-600">—</span>}
                   </td>
-                  <td className={`py-2.5 px-1 text-right font-semibold ${row.Net > 0 ? 'text-emerald-600' : row.Net < 0 ? 'text-red-500' : 'text-slate-300 dark:text-slate-600'}`}>
-                    {row.Income > 0 || row.Expenses > 0 ? formatCurrency(row.Net) : '—'}
+                  <td className={`py-2.5 px-1 text-right font-semibold whitespace-nowrap tabular-nums ${row.Net > 0 ? 'text-emerald-600' : row.Net < 0 ? 'text-red-500' : 'text-slate-300 dark:text-slate-600'}`}>
+                    {row.Income > 0 || row.Expenses > 0
+                      ? formatSignedCurrency(row.Net, row.Net < 0 ? 'expense' : 'income')
+                      : '—'}
                   </td>
-                  <td className="py-2.5 px-1 text-right text-slate-500 dark:text-slate-400">
+                  <td className="py-2.5 px-1 text-right text-slate-500 dark:text-slate-400 whitespace-nowrap tabular-nums">
                     {row.SavingsRate != null ? `${row.SavingsRate}%` : <span className="text-slate-300 dark:text-slate-600">—</span>}
                   </td>
-                  <td className="py-2.5 px-1 text-right text-slate-400 dark:text-slate-500">{row.txns || '—'}</td>
+                  <td className="py-2.5 px-1 text-right text-slate-400 dark:text-slate-500 whitespace-nowrap tabular-nums">{row.txns || '—'}</td>
                 </tr>
               ))}
             </tbody>

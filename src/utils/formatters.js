@@ -5,8 +5,19 @@ const NBSP = ' '
 // U+0020 space, U+202F narrow no-break space, U+2009 thin space
 const BREAKABLE_SPACES = /[   ]/g
 
+// U+2060 WORD JOINER — zero width, and forbids a line break at its position.
+const WORD_JOINER = '⁠'
+
+// A leading sign is itself a break opportunity: U+2212 MINUS SIGN demonstrably
+// breaks in Chrome ("−" alone on one line, the number on the next), which is what
+// put the minus above the value in the Analytics Net column. Gluing the sign to the
+// number with a word joiner makes the amount unbreakable no matter what CSS the
+// call site applies, so `whitespace-nowrap` is a second line of defence rather than
+// the only thing holding it together.
 function makeNonBreaking(str) {
-  return str.replace(BREAKABLE_SPACES, NBSP)
+  return str
+    .replace(BREAKABLE_SPACES, NBSP)
+    .replace(/^([+\-−])/, `$1${WORD_JOINER}`)
 }
 
 export function formatCurrency(amount) {
@@ -29,7 +40,8 @@ export function formatCurrency(amount) {
 // the sign and the number always stay together on the same line.
 export function formatSignedCurrency(amount, type) {
   const sign = type === 'income' ? '+' : '−' // U+2212 MINUS SIGN
-  return `${sign}${formatCurrency(amount)}`
+  // Math.abs so a value that already carries its own sign cannot produce "−-$5.00"
+  return `${sign}${WORD_JOINER}${formatCurrency(Math.abs(amount ?? 0))}`
 }
 
 export function formatMonthLabel(monthKey) {

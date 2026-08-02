@@ -113,11 +113,12 @@ export default function Transactions() {
     setUndoToast(null)
   }, [undoToast, updateTransaction])
 
-  // Row action buttons. Rendered twice per row — inline on sm+, on their own
-  // right-aligned line on mobile — so the row body keeps its full width for text.
+  // Row action buttons — one inline column on the right at every width. Tap targets
+  // stay ~32px on touch via p-2; the icons themselves are small so the column costs
+  // little horizontal room, which is what lets the row stay a single block.
   function RowActions({ t, className = '' }) {
     return (
-      <div className={`flex items-center gap-0.5 ${className}`}>
+      <div className={`flex items-center gap-0.5 flex-shrink-0 -mr-1 ${className}`}>
         {t.isPending && (
           <button
             onClick={() => handleConfirm(t.id)}
@@ -152,10 +153,10 @@ export default function Transactions() {
   // needs; the date is kept whole so it is never the thing that gets clipped.
   function MetaLine({ parts }) {
     return (
-      <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500 leading-relaxed">
+      <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500 leading-snug">
         {parts.map((part, i) => (
           <span key={i}>
-            {i > 0 && <span className="mx-1 text-slate-300 dark:text-slate-600">·</span>}
+            {i > 0 && <span className="mx-0.5 text-slate-300 dark:text-slate-600">·</span>}
             {part}
           </span>
         ))}
@@ -182,10 +183,10 @@ export default function Transactions() {
 
     return (
       <div key={t.id} className={t.isPending ? 'bg-amber-50/60 dark:bg-amber-900/10' : ''}>
-        <div className="group px-4 sm:px-5 py-3 sm:py-3.5 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
-          <div className="flex items-start gap-3 sm:gap-3.5">
+        <div className="group px-4 sm:px-5 py-2.5 sm:py-3 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+          <div className="flex items-center gap-3 sm:gap-3.5">
             <div
-              className="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1.5"
+              className="w-2.5 h-2.5 rounded-full flex-shrink-0"
               style={{ backgroundColor: color }}
             />
 
@@ -215,17 +216,13 @@ export default function Transactions() {
               <MetaLine parts={metaParts} />
             </div>
 
-            {/* Desktop: actions sit inline and fade in on hover */}
+            {/* Actions stay inline at every width. On pointer devices they fade in on
+                hover; on touch there is no hover, so they are always visible. */}
             <RowActions
               t={t}
-              className={`hidden sm:flex flex-shrink-0 ${
-                t.isPending ? '' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'
-              } transition-opacity`}
+              className={t.isPending ? '' : 'sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100 transition-opacity'}
             />
           </div>
-
-          {/* Mobile: actions get their own line so they never squeeze the text */}
-          <RowActions t={t} className="flex sm:hidden justify-end -mr-1 mt-0.5" />
         </div>
 
         {/* Split sub-rows */}
