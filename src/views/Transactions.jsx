@@ -194,7 +194,12 @@ export default function Transactions() {
               {/* Title + amount share one line; the amount never wraps or shrinks */}
               <div className="flex items-baseline justify-between gap-3">
                 <span className="flex items-center gap-1.5 min-w-0">
-                  <span className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">
+                  {/* Long merchant names still clip on a phone; the title keeps the
+                      full value reachable rather than lost. */}
+                  <span
+                    className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate"
+                    title={t.merchant || (isSplit ? 'Split Transaction' : getCategoryName(t.categoryId))}
+                  >
                     {t.merchant || (isSplit ? 'Split Transaction' : getCategoryName(t.categoryId))}
                   </span>
                   {isSplit && (
