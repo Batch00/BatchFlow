@@ -24,6 +24,16 @@ function dbToCategory(row, allSubRows) {
   }
 }
 
+// A transaction counts as split only when it actually carries split rows.
+// `is_split` alone is not trusted: a row flagged as split with zero rows in
+// transaction_splits is invalid data, and every consumer of `t.splits` assumes a
+// non-empty array (`t.splits[0]`, "N categories", the sub-row map). Deriving the
+// shape from the rows instead of the flag means a bad flag degrades that one
+// transaction to an uncategorised row rather than throwing during render.
+export function isSplitPayload(categoryId, splits) {
+  return categoryId === null && Array.isArray(splits) && splits.length > 0
+}
+
 function dbToTransaction(row) {
   const base = {
     id: row.id,
@@ -36,21 +46,30 @@ function dbToTransaction(row) {
     isPending: row.is_pending ?? false,
     scheduledDate: row.scheduled_date ?? null,
   }
-  if (row.is_split) {
+  // Drop malformed split rows so downstream `.map()` / `.find()` never sees a hole
+  const splitRows = (row.transaction_splits ?? []).filter(s => s && s.category_id)
+  if (row.is_split && splitRows.length > 0) {
     return {
       ...base,
       categoryId: null,
       subcategoryId: null,
-      splits: (row.transaction_splits ?? []).map(s => ({
+      splits: splitRows.map(s => ({
         categoryId: s.category_id,
         subcategoryId: s.subcategory_id ?? null,
         amount: parseFloat(s.amount),
       })),
     }
   }
+  if (row.is_split) {
+    // Invalid: flagged split, no usable rows. Render it as a flat (uncategorised)
+    // transaction and surface it so the underlying row can be repaired.
+    console.warn(
+      `Transaction ${row.id} has is_split = true but no split rows — treating as uncategorised.`
+    )
+  }
   return {
     ...base,
-    categoryId: row.category_id,
+    categoryId: row.category_id ?? null,
     subcategoryId: row.subcategory_id ?? null,
   }
 }
@@ -460,7 +479,10 @@ export function AppProvider({ children }) {
 
   const addTransaction = useCallback(async (transaction) => {
     if (blocked()) return null
-    const isSplit = transaction.categoryId === null && Array.isArray(transaction.splits)
+    // An empty splits array is NOT a split. Writing `is_split: true` and then
+    // skipping the (zero-row) splits insert is what produces a flagged split with
+    // nothing to render.
+    const isSplit = isSplitPayload(transaction.categoryId, transaction.splits)
 
     const { data: txRow, error: txErr } = await supabase
       .from('transactions')
@@ -484,7 +506,7 @@ export function AppProvider({ children }) {
     if (txErr) { console.error('Failed to add transaction:', txErr); return null }
 
     let splitRows = []
-    if (isSplit && transaction.splits.length > 0) {
+    if (isSplit) {
       const { data: inserted, error: splitErr } = await supabase
         .from('transaction_splits')
         .insert(transaction.splits.map(s => ({
@@ -494,8 +516,16 @@ export function AppProvider({ children }) {
           amount: s.amount,
         })))
         .select()
-      if (splitErr) console.error('Failed to add splits:', splitErr)
-      splitRows = inserted ?? []
+
+      // PostgREST gives us no cross-table transaction, so the parent row and its
+      // splits are two round trips. If the second one fails we must undo the first:
+      // leaving the parent behind is exactly the is_split-with-no-splits state.
+      if (splitErr || !inserted?.length) {
+        console.error('Failed to add splits — rolling back the transaction:', splitErr)
+        await supabase.from('transactions').delete().eq('id', txRow.id).eq('user_id', user.id)
+        return null
+      }
+      splitRows = inserted
     }
 
     const newTransaction = dbToTransaction({ ...txRow, transaction_splits: splitRows })
@@ -509,7 +539,7 @@ export function AppProvider({ children }) {
     const existing = transactionsRef.current.find(t => t.id === id)
     if (!existing) return
 
-    const isSplit = updates.categoryId === null && Array.isArray(updates.splits)
+    const isSplit = isSplitPayload(updates.categoryId, updates.splits)
 
     const updateFields = {
       date: updates.date,
@@ -529,21 +559,26 @@ export function AppProvider({ children }) {
       updateFields.is_pending = updates.isPending
     }
 
-    const { error: txErr } = await supabase
+    // Ordering matters: the parent row and its splits are separate round trips with
+    // no shared transaction, so each step is sequenced to never leave the row
+    // flagged as a split with nothing under it, whichever step fails.
+    const updateParent = () => supabase
       .from('transactions')
       .update(updateFields)
       .eq('id', id)
       .eq('user_id', user.id) // defense-in-depth: RLS enforces this server-side too
 
-    if (txErr) { console.error('Failed to update transaction:', txErr); return }
-
-    // Replace splits whenever the transaction was or is now a split
-    if (existing.splits || isSplit) {
-      await supabase.from('transaction_splits').delete().eq('transaction_id', id)
-    }
+    const hadSplits = Array.isArray(existing.splits) && existing.splits.length > 0
 
     let newSplitRows = []
-    if (isSplit && updates.splits.length > 0) {
+    if (isSplit) {
+      // Becoming (or staying) a split. Add the new rows, drop the old ones, then
+      // update the parent — in that order the row always has at least one split
+      // attached, and the parent UPDATE (which is what the realtime subscription
+      // re-fetches on) only fires once the split set is already correct.
+      const { data: oldRows } = await supabase
+        .from('transaction_splits').select('id').eq('transaction_id', id)
+
       const { data: inserted, error: splitErr } = await supabase
         .from('transaction_splits')
         .insert(updates.splits.map(s => ({
@@ -553,8 +588,38 @@ export function AppProvider({ children }) {
           amount: s.amount,
         })))
         .select()
-      if (splitErr) console.error('Failed to update splits:', splitErr)
-      newSplitRows = inserted ?? []
+      if (splitErr || !inserted?.length) {
+        console.error('Failed to write splits — transaction left unchanged:', splitErr)
+        return
+      }
+      newSplitRows = inserted
+
+      const oldIds = (oldRows ?? []).map(r => r.id)
+      if (oldIds.length > 0) {
+        const { error: pruneErr } = await supabase
+          .from('transaction_splits').delete().in('id', oldIds)
+        if (pruneErr) {
+          // Undo our insert rather than leave the transaction double-counted
+          console.error('Failed to clear previous splits — reverting:', pruneErr)
+          await supabase.from('transaction_splits').delete().in('id', inserted.map(r => r.id))
+          return
+        }
+      }
+
+      const { error: txErr } = await updateParent()
+      if (txErr) { console.error('Failed to update transaction:', txErr); return }
+    } else {
+      // Becoming flat: clear the flag FIRST, then drop the rows. If the delete
+      // fails the leftovers are orphans that nothing reads, which is harmless —
+      // the reverse order would leave a flagged split with no rows.
+      const { error: txErr } = await updateParent()
+      if (txErr) { console.error('Failed to update transaction:', txErr); return }
+
+      // `categoryId === null` also covers a row the mapper repaired from a bad flag,
+      // whose stale split rows still need clearing.
+      if (hadSplits || existing.categoryId === null) {
+        await supabase.from('transaction_splits').delete().eq('transaction_id', id)
+      }
     }
 
     const updatedTransaction = dbToTransaction({
@@ -653,6 +718,8 @@ export function AppProvider({ children }) {
 
     // Write updated fields to every transaction instance tied to this rule —
     // past confirmed and future pending alike — with no restriction on status or date.
+    // Split instances are excluded: they carry their categories in transaction_splits,
+    // so stamping a category_id on them would contradict is_split = true.
     await supabase.from('transactions')
       .update({
         merchant: updates.merchant || null,
@@ -663,6 +730,7 @@ export function AppProvider({ children }) {
         subcategory_id: updates.subcategoryId || null,
       })
       .eq('recurring_rule_id', id)
+      .eq('is_split', false)
       .eq('user_id', user.id)
 
     // Delete ALL pending instances for this rule. Patching fields in-place is not
@@ -1050,8 +1118,10 @@ export function AppProvider({ children }) {
       await supabase.from('subcategories').insert(subInserts)
     }
 
-    // Insert flat (non-split) transactions
-    const flatTxns = (backup.transactions ?? []).filter(t => !t.splits)
+    // Insert flat (non-split) transactions. A backup entry with an empty `splits`
+    // array is flat, not split — treating it as split would import the row with
+    // is_split = true and nothing under it.
+    const flatTxns = (backup.transactions ?? []).filter(t => !(t.splits?.length > 0))
     if (flatTxns.length > 0) {
       await supabase.from('transactions').insert(flatTxns.map(t => ({
         id: t.id, user_id: user.id, date: t.date, amount: t.amount, type: t.type,
@@ -1061,7 +1131,7 @@ export function AppProvider({ children }) {
     }
 
     // Insert split transactions sequentially (each needs its splits row after)
-    for (const t of (backup.transactions ?? []).filter(t => t.splits)) {
+    for (const t of (backup.transactions ?? []).filter(t => t.splits?.length > 0)) {
       const { data: txRow } = await supabase
         .from('transactions')
         .insert({
@@ -1071,15 +1141,21 @@ export function AppProvider({ children }) {
         })
         .select().single()
 
-      if (txRow && t.splits?.length > 0) {
-        await supabase.from('transaction_splits').insert(
-          t.splits.map(s => ({
-            transaction_id: txRow.id,
-            category_id: s.categoryId,
-            subcategory_id: s.subcategoryId || null,
-            amount: s.amount,
-          }))
-        )
+      if (!txRow) continue
+
+      const { error: splitErr } = await supabase.from('transaction_splits').insert(
+        t.splits.map(s => ({
+          transaction_id: txRow.id,
+          category_id: s.categoryId,
+          subcategory_id: s.subcategoryId || null,
+          amount: s.amount,
+        }))
+      )
+      // Same rule as addTransaction: a parent whose splits did not land must not
+      // survive the import as a flagged split with nothing under it.
+      if (splitErr) {
+        console.error(`Import: splits failed for transaction ${txRow.id}, skipping it:`, splitErr)
+        await supabase.from('transactions').delete().eq('id', txRow.id).eq('user_id', user.id)
       }
     }
 

@@ -26,6 +26,7 @@ import {
   getTotalPlannedByType,
   getUnbudgetedAmount,
 } from '../utils/budgetUtils'
+import { GuardedRow } from '../components/common/ErrorBoundary'
 import ProgressBar from '../components/common/ProgressBar'
 import BudgetEmptyState from '../components/budget/BudgetEmptyState'
 import TransactionModal from '../components/transactions/TransactionModal'
@@ -359,24 +360,26 @@ export default function Dashboard() {
                   </span>
                 </div>
                 <div className="bg-white dark:bg-slate-800 rounded-xl border border-amber-200 dark:border-amber-900/60 divide-y divide-slate-100 dark:divide-slate-700">
-                  {upcomingPending.map(t => {
-                    const isIncome = t.type === 'income'
-                    const cat = categories.find(c => c.id === t.categoryId)
-                    const label = t.merchant || cat?.name || 'Recurring'
-                    const color = cat?.color ?? '#94a3b8'
-                    return (
-                      <div key={t.id} className="flex items-center gap-3 px-4 py-3">
-                        <div className="w-2 h-2 rounded-full flex-shrink-0 opacity-60" style={{ backgroundColor: color }} />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm text-slate-500 dark:text-slate-400 truncate italic">{label}</p>
-                          <p className="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">{formatDate(t.date)}</p>
+                  {upcomingPending.map(t => (
+                    <GuardedRow key={t.id} label={`pending transaction ${t.id}`}>{() => {
+                      const isIncome = t.type === 'income'
+                      const cat = categories.find(c => c.id === t.categoryId)
+                      const label = t.merchant || cat?.name || 'Recurring'
+                      const color = cat?.color ?? '#94a3b8'
+                      return (
+                        <div className="flex items-center gap-3 px-4 py-3">
+                          <div className="w-2 h-2 rounded-full flex-shrink-0 opacity-60" style={{ backgroundColor: color }} />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-slate-500 dark:text-slate-400 truncate italic">{label}</p>
+                            <p className="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">{formatDate(t.date)}</p>
+                          </div>
+                          <span className={`text-sm font-medium flex-shrink-0 tabular-nums whitespace-nowrap italic ${isIncome ? 'text-emerald-500 opacity-70' : 'text-slate-400 dark:text-slate-500'}`}>
+                            {formatSignedCurrency(t.amount, t.type)}
+                          </span>
                         </div>
-                        <span className={`text-sm font-medium flex-shrink-0 tabular-nums whitespace-nowrap italic ${isIncome ? 'text-emerald-500 opacity-70' : 'text-slate-400 dark:text-slate-500'}`}>
-                          {formatSignedCurrency(t.amount, t.type)}
-                        </span>
-                      </div>
-                    )
-                  })}
+                      )
+                    }}</GuardedRow>
+                  ))}
                 </div>
               </div>
             )}
@@ -391,31 +394,36 @@ export default function Dashboard() {
                   </span>
                 </div>
                 <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-700">
-                  {recentConfirmed.map(t => {
-                    const isIncome = t.type === 'income'
-                    let label, color
-                    if (t.splits) {
-                      const firstCat = categories.find(c => c.id === t.splits[0].categoryId)
-                      label = t.merchant || 'Split Transaction'
-                      color = firstCat?.color ?? '#94a3b8'
-                    } else {
-                      const cat = categories.find(c => c.id === t.categoryId)
-                      label = t.merchant || cat?.name || 'Unknown'
-                      color = cat?.color ?? '#94a3b8'
-                    }
-                    return (
-                      <div key={t.id} className="flex items-center gap-3 px-4 py-3">
-                        <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm text-slate-800 dark:text-slate-100 truncate">{label}</p>
-                          <p className="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">{formatDate(t.date)}</p>
+                  {recentConfirmed.map(t => (
+                    <GuardedRow key={t.id} label={`transaction ${t.id}`}>{() => {
+                      const isIncome = t.type === 'income'
+                      // A split with no rows is malformed data — read the first split
+                      // defensively and fall through to the flat branch when absent.
+                      const firstSplit = Array.isArray(t.splits) ? t.splits.find(Boolean) : null
+                      let label, color
+                      if (firstSplit) {
+                        const firstCat = categories.find(c => c.id === firstSplit.categoryId)
+                        label = t.merchant || 'Split Transaction'
+                        color = firstCat?.color ?? '#94a3b8'
+                      } else {
+                        const cat = categories.find(c => c.id === t.categoryId)
+                        label = t.merchant || cat?.name || 'Unknown'
+                        color = cat?.color ?? '#94a3b8'
+                      }
+                      return (
+                        <div className="flex items-center gap-3 px-4 py-3">
+                          <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-slate-800 dark:text-slate-100 truncate">{label}</p>
+                            <p className="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">{formatDate(t.date)}</p>
+                          </div>
+                          <span className={`text-sm font-semibold flex-shrink-0 tabular-nums whitespace-nowrap ${isIncome ? 'text-emerald-600' : 'text-slate-800 dark:text-slate-100'}`}>
+                            {formatSignedCurrency(t.amount, t.type)}
+                          </span>
                         </div>
-                        <span className={`text-sm font-semibold flex-shrink-0 tabular-nums whitespace-nowrap ${isIncome ? 'text-emerald-600' : 'text-slate-800 dark:text-slate-100'}`}>
-                          {formatSignedCurrency(t.amount, t.type)}
-                        </span>
-                      </div>
-                    )
-                  })}
+                      )
+                    }}</GuardedRow>
+                  ))}
                 </div>
               </div>
             )}

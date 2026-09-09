@@ -84,7 +84,9 @@ export default function TransactionModal({ isOpen, onClose, editingTransaction =
   useEffect(() => {
     if (!isOpen) return
     if (editingTransaction) {
-      if (editingTransaction.splits) {
+      // Only an actual, populated split opens in split mode; anything else opens as
+      // a single row so the form always has something the user can act on.
+      if (editingTransaction.splits?.length > 0) {
         setForm({
           amount: String(editingTransaction.amount),
           date: editingTransaction.date,

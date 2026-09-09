@@ -1,9 +1,16 @@
+// Treat only a non-empty splits array as split, and skip malformed entries: a
+// transaction whose splits are missing falls back to its own category, and one
+// with an unusable split row contributes nothing rather than throwing.
+export function hasSplits(t) {
+  return Array.isArray(t?.splits) && t.splits.length > 0
+}
+
 export function getCategorySpent(transactions, categoryId) {
   return transactions.reduce((sum, t) => {
-    if (t.splits) {
+    if (hasSplits(t)) {
       return sum + t.splits
-        .filter(s => s.categoryId === categoryId)
-        .reduce((s, sp) => s + sp.amount, 0)
+        .filter(s => s?.categoryId === categoryId)
+        .reduce((s, sp) => s + (sp.amount ?? 0), 0)
     }
     return sum + (t.categoryId === categoryId ? (t.amount ?? 0) : 0)
   }, 0)
@@ -21,10 +28,10 @@ export function getSubcategoryPlanned(monthBudget, subcategoryId) {
 // Amount spent on a specific subcategory
 export function getSubcategorySpent(transactions, subcategoryId) {
   return transactions.reduce((sum, t) => {
-    if (t.splits) {
+    if (hasSplits(t)) {
       return sum + t.splits
-        .filter(s => s.subcategoryId === subcategoryId)
-        .reduce((s, sp) => s + sp.amount, 0)
+        .filter(s => s?.subcategoryId === subcategoryId)
+        .reduce((s, sp) => s + (sp.amount ?? 0), 0)
     }
     return sum + (t.subcategoryId === subcategoryId ? (t.amount ?? 0) : 0)
   }, 0)

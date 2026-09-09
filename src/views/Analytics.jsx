@@ -13,7 +13,7 @@ import { loadData, saveData } from '../utils/storage'
 import {
   getCategorySpent, getCategoryEffectivePlanned,
   getSubcategorySpent, getSubcategoryPlanned,
-  getTotalByType, getTotalPlannedByType,
+  getTotalByType, getTotalPlannedByType, hasSplits,
 } from '../utils/budgetUtils'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -245,7 +245,7 @@ function MonthView({ categories, transactions, allTransactions, currentMonth, bu
         spent: getCategorySpent(transactions, cat.id),
         planned: getCategoryEffectivePlanned(cat, budget),
         txns: transactions.filter(t =>
-          t.splits ? t.splits.some(s => s.categoryId === cat.id) : t.categoryId === cat.id
+          hasSplits(t) ? t.splits.some(s => s?.categoryId === cat.id) : t.categoryId === cat.id
         ).length,
       }))
       .filter(d => d.spent > 0 || d.planned > 0)
@@ -858,7 +858,7 @@ function ActivityView({ categories, allTransactions, isDark }) {
       .map(cat => {
         const catTxns = confirmedTxns.filter(t =>
           t.type === 'expense' && (
-            t.splits ? t.splits.some(s => s.categoryId === cat.id) : t.categoryId === cat.id
+            hasSplits(t) ? t.splits.some(s => s?.categoryId === cat.id) : t.categoryId === cat.id
           )
         )
         const total = getCategorySpent(confirmedTxns.filter(t => t.type === 'expense'), cat.id)
@@ -1033,7 +1033,7 @@ function SubcategoriesView({ categories, allTransactions, budgets, isDark, range
           0
         )
         const txnCount = expenseRangeTxns.filter(t =>
-          t.splits ? t.splits.some(s => s.subcategoryId === sub.id) : t.subcategoryId === sub.id
+          hasSplits(t) ? t.splits.some(s => s?.subcategoryId === sub.id) : t.subcategoryId === sub.id
         ).length
         if (spent > 0 || planned > 0) {
           rows.push({

@@ -3,6 +3,7 @@ import { Plus, Pencil, Trash2, CheckCircle, RefreshCw, RotateCcw } from 'lucide-
 import { useApp } from '../context/AppContext'
 import { formatSignedCurrency, formatDate } from '../utils/formatters'
 import { disabledCls, readOnlyProps } from '../components/common/ReadOnly'
+import { GuardedRow } from '../components/common/ErrorBoundary'
 import TransactionModal from '../components/transactions/TransactionModal'
 
 // Compute tomorrow's date string (YYYY-MM-DD) to gate pending visibility
@@ -48,7 +49,7 @@ export default function Transactions() {
   }
 
   const getSplitCategoryColor = (split) =>
-    categories.find(c => c.id === split.categoryId)?.color ?? '#94a3b8'
+    categories.find(c => c.id === split?.categoryId)?.color ?? '#94a3b8'
 
   // Apply visibility filter then split into pending / completed sections
   const visibleTransactions = useMemo(
@@ -166,13 +167,17 @@ export default function Transactions() {
 
   // Render a single transaction row (shared between pending and completed sections)
   function renderTransaction(t) {
-    const isSplit = Boolean(t.splits)
-    const color = isSplit ? getSplitCategoryColor(t.splits[0]) : getCategoryColor(t.categoryId)
+    // Only treat the row as split when there is something to show. A split with an
+    // empty array is malformed data; fall back to the flat layout so the row still
+    // renders its merchant, date and amount instead of throwing on splits[0].
+    const splits = Array.isArray(t.splits) ? t.splits.filter(Boolean) : []
+    const isSplit = splits.length > 0
+    const color = isSplit ? getSplitCategoryColor(splits[0]) : getCategoryColor(t.categoryId)
     const subName = isSplit ? null : getSubcategoryName(t.categoryId, t.subcategoryId)
 
     const metaParts = []
     if (isSplit) {
-      metaParts.push(`${t.splits.length} categories`)
+      metaParts.push(`${splits.length} categories`)
     } else {
       metaParts.push(subName
         ? `${getCategoryName(t.categoryId)} · ${subName}`
@@ -231,8 +236,8 @@ export default function Transactions() {
         </div>
 
         {/* Split sub-rows */}
-        {isSplit && t.splits.map((split, idx) => {
-          const isLast = idx === t.splits.length - 1
+        {isSplit && splits.map((split, idx) => {
+          const isLast = idx === splits.length - 1
           const splitSub = getSubcategoryName(split.categoryId, split.subcategoryId)
           return (
             <div
@@ -298,7 +303,11 @@ export default function Transactions() {
                 Pending
               </h3>
               <div className="bg-white dark:bg-slate-800 rounded-xl border border-amber-200 dark:border-amber-900/60 divide-y divide-slate-100 dark:divide-slate-700 overflow-hidden">
-                {pendingList.map(t => renderTransaction(t))}
+                {pendingList.map(t => (
+                  <GuardedRow key={t.id} label={`transaction ${t.id}`}>
+                    {() => renderTransaction(t)}
+                  </GuardedRow>
+                ))}
               </div>
             </div>
           )}
@@ -310,7 +319,11 @@ export default function Transactions() {
                 Completed
               </h3>
               <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-700 overflow-hidden">
-                {completedList.map(t => renderTransaction(t))}
+                {completedList.map(t => (
+                  <GuardedRow key={t.id} label={`transaction ${t.id}`}>
+                    {() => renderTransaction(t)}
+                  </GuardedRow>
+                ))}
               </div>
             </div>
           )}

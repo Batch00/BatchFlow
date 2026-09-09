@@ -14,6 +14,7 @@ import {
   Check, X, GripVertical,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
+import { hasSplits } from '../utils/budgetUtils'
 import { disabledCls, readOnlyProps } from '../components/common/ReadOnly'
 import CategoryModal from '../components/categories/CategoryModal'
 
@@ -200,13 +201,13 @@ function CategoryCard({ category, isFirst, isLast, transactions, onEdit, onDelet
   }
 
   const catTransactionCount = transactions.filter(t =>
-    t.splits ? t.splits.some(s => s.categoryId === category.id) : t.categoryId === category.id
+    hasSplits(t) ? t.splits.some(s => s?.categoryId === category.id) : t.categoryId === category.id
   ).length
   const isIncome = category.type === 'income'
 
   const getSubTransactionCount = (subId) =>
     transactions.filter(t =>
-      t.splits ? t.splits.some(s => s.subcategoryId === subId) : t.subcategoryId === subId
+      hasSplits(t) ? t.splits.some(s => s?.subcategoryId === subId) : t.subcategoryId === subId
     ).length
 
   // No sensors in read-only mode — nothing can start a drag
