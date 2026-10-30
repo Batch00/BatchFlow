@@ -662,6 +662,20 @@ export function AppProvider({ children }) {
     setTransactions(prev => prev.map(t => t.id === id ? { ...t, isPending: false } : t))
   }, [user])
 
+  // Bulk confirm (isPending=false) or revert to pending (isPending=true) in one write
+  const setTransactionsPending = useCallback(async (ids, isPending) => {
+    if (blocked()) return
+    if (ids.length === 0) return
+    const { error } = await supabase
+      .from('transactions')
+      .update({ is_pending: isPending })
+      .in('id', ids)
+      .eq('user_id', user.id)
+    if (error) { console.error('Failed to update pending status:', error); return }
+    const idSet = new Set(ids)
+    setTransactions(prev => prev.map(t => idSet.has(t.id) ? { ...t, isPending } : t))
+  }, [user])
+
   // ── Recurring Rules ───────────────────────────────────────────────────────────
 
   const addRecurringRule = useCallback(async (ruleData) => {
@@ -1223,6 +1237,7 @@ export function AppProvider({ children }) {
     updateTransaction,
     deleteTransaction,
     confirmTransaction,
+    setTransactionsPending,
     addRecurringRule,
     updateRecurringRule,
     pauseRecurringRule,
@@ -1252,7 +1267,7 @@ export function AppProvider({ children }) {
     recurringRules, paycheckPlans, currentMonthPaycheckPlans,
     addPaycheckPlan, updatePaycheckPlan, deletePaycheckPlan,
     refreshTransactions,
-    addTransaction, updateTransaction, deleteTransaction, confirmTransaction,
+    addTransaction, updateTransaction, deleteTransaction, confirmTransaction, setTransactionsPending,
     addRecurringRule, updateRecurringRule, pauseRecurringRule, deleteRecurringRule, generateRecurringInstances,
     setBudgetAmount, getMonthBudget,
     resetMonthBudget, setSubcategoryBudgetAmount, copyBudget, moveSubcategory,

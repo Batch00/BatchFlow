@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import { Plus, Pencil, Trash2, CheckCircle, RefreshCw, RotateCcw } from 'lucide-react'
 import { useApp } from '../context/AppContext'
-import { formatSignedCurrency, formatDate } from '../utils/formatters'
+import { formatSignedCurrency, formatDate, getTodayString } from '../utils/formatters'
 import { disabledCls, readOnlyProps } from '../components/common/ReadOnly'
 import { GuardedRow } from '../components/common/ErrorBoundary'
 import TransactionModal from '../components/transactions/TransactionModal'
@@ -26,13 +26,14 @@ export default function Transactions() {
     categories,
     deleteTransaction,
     confirmTransaction,
+    setTransactionsPending,
     updateTransaction,
     readOnly,
   } = useApp()
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editingTransaction, setEditingTransaction] = useState(null)
-  const [undoToast, setUndoToast] = useState(null) // { id, timeoutId, snapshot }
+  const [undoToast, setUndoToast] = useState(null) // { id, timeoutId, snapshot } or { ids, timeoutId } for bulk
 
   const tomorrowStr = useMemo(() => getTomorrowStr(), [])
 
@@ -61,6 +62,12 @@ export default function Transactions() {
     () => visibleTransactions.filter(t => t.isPending).sort((a, b) => b.date.localeCompare(a.date)),
     [visibleTransactions]
   )
+  // Pending items due today or earlier; tomorrow's early-visible recurring rows are excluded
+  const dueIds = useMemo(() => {
+    const todayStr = getTodayString()
+    return pendingList.filter(t => (t.scheduledDate || t.date) <= todayStr).map(t => t.id)
+  }, [pendingList])
+
   const completedList = useMemo(
     () => visibleTransactions.filter(t => !t.isPending).sort((a, b) => b.date.localeCompare(a.date)),
     [visibleTransactions]
@@ -105,14 +112,30 @@ export default function Transactions() {
     setUndoToast({ id, timeoutId, snapshot })
   }, [currentMonthTransactions, confirmTransaction, undoToast, readOnly])
 
+  const handleConfirmAll = useCallback(() => {
+    if (readOnly || dueIds.length === 0) return
+    const ids = dueIds
+    setTransactionsPending(ids, false)
+
+    if (undoToast) clearTimeout(undoToast.timeoutId)
+
+    const timeoutId = setTimeout(() => setUndoToast(null), 5000)
+    setUndoToast({ ids, timeoutId })
+  }, [dueIds, setTransactionsPending, undoToast, readOnly])
+
   const handleUndo = useCallback(() => {
     if (!undoToast) return
     clearTimeout(undoToast.timeoutId)
+    if (undoToast.ids) {
+      setTransactionsPending(undoToast.ids, true)
+      setUndoToast(null)
+      return
+    }
     const { snapshot } = undoToast
     // Revert the transaction back to pending
     updateTransaction(snapshot.id, { ...snapshot, isPending: true })
     setUndoToast(null)
-  }, [undoToast, updateTransaction])
+  }, [undoToast, updateTransaction, setTransactionsPending])
 
   // Row action buttons — one inline column on the right at every width. Tap targets
   // stay ~32px on touch via p-2; the icons themselves are small so the column costs
@@ -299,9 +322,22 @@ export default function Transactions() {
           {/* Pending section */}
           {pendingList.length > 0 && (
             <div>
-              <h3 className="text-xs font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-2 px-1">
-                Pending
-              </h3>
+              <div className="flex items-center justify-between gap-3 mb-2 px-1">
+                <h3 className="text-xs font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wider">
+                  Pending
+                </h3>
+                {dueIds.length > 1 && (
+                  <button
+                    onClick={handleConfirmAll}
+                    disabled={readOnly}
+                    {...readOnlyProps(readOnly, `Approve all ${dueIds.length} due today or earlier`)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 -my-1.5 rounded-lg text-xs font-medium text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors whitespace-nowrap ${disabledCls}`}
+                  >
+                    <CheckCircle size={14} />
+                    Approve all ({dueIds.length})
+                  </button>
+                )}
+              </div>
               <div className="bg-white dark:bg-slate-800 rounded-xl border border-amber-200 dark:border-amber-900/60 divide-y divide-slate-100 dark:divide-slate-700 overflow-hidden">
                 {pendingList.map(t => (
                   <GuardedRow key={t.id} label={`transaction ${t.id}`}>
@@ -351,7 +387,7 @@ export default function Transactions() {
       {undoToast && (
         <div className="fixed bottom-24 left-4 right-4 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 z-50 flex items-center justify-center gap-3 bg-slate-800 dark:bg-slate-700 text-white text-sm px-5 py-3 rounded-xl shadow-xl border border-slate-700 dark:border-slate-600">
           <CheckCircle size={15} className="text-emerald-400 flex-shrink-0" />
-          <span>Transaction confirmed</span>
+          <span>{undoToast.ids ? `${undoToast.ids.length} transactions confirmed` : 'Transaction confirmed'}</span>
           <button
             onClick={handleUndo}
             className="flex items-center gap-1 text-indigo-400 hover:text-indigo-300 font-medium transition-colors ml-1"
