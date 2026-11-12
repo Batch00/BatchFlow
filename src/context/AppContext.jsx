@@ -1071,20 +1071,34 @@ export function AppProvider({ children }) {
     if (blocked()) return
     // Deletes all transactions and budget plans for a single month.
     // transaction_splits cascade-delete from the DB schema.
-    await supabase.from('transactions').delete()
+    // `date` is a date column, so filter by range (LIKE is not valid on it).
+    // Returns { error }; local state is only updated when every delete succeeded.
+    const [y, m] = monthKey.split('-').map(Number)
+    const monthStart = `${monthKey}-01`
+    const nextMonthStart = m === 12
+      ? `${y + 1}-01-01`
+      : `${y}-${String(m + 1).padStart(2, '0')}-01`
+
+    const { error: txErr } = await supabase.from('transactions').delete()
       .eq('user_id', user.id)
-      .like('date', `${monthKey}%`)
+      .gte('date', monthStart)
+      .lt('date', nextMonthStart)
+    if (txErr) { console.error('Failed to clear month transactions:', txErr); return { error: txErr } }
+
+    const { error: planErr } = await supabase.from('budget_plans').delete()
+      .eq('user_id', user.id)
+      .eq('month_key', monthKey)
+    if (planErr) { console.error('Failed to clear month budget plans:', planErr); return { error: planErr } }
+
+    const { error: paycheckErr } = await supabase.from('paycheck_plans').delete()
+      .eq('user_id', user.id)
+      .eq('month_key', monthKey)
+    if (paycheckErr) { console.error('Failed to clear month paycheck plans:', paycheckErr); return { error: paycheckErr } }
+
     setTransactions(prev => prev.filter(t => !t.date?.startsWith(monthKey)))
-
-    await supabase.from('budget_plans').delete()
-      .eq('user_id', user.id)
-      .eq('month_key', monthKey)
     setBudgets(prev => { const next = { ...prev }; delete next[monthKey]; return next })
-
-    await supabase.from('paycheck_plans').delete()
-      .eq('user_id', user.id)
-      .eq('month_key', monthKey)
     setPaycheckPlans(prev => prev.filter(p => p.monthKey !== monthKey))
+    return { error: null }
   }, [user])
 
   // ── Clear all user data (for account deletion) ────────────────────────────────

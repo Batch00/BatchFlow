@@ -202,6 +202,7 @@ export default function Settings() {
   const [clearConfirm, setClearConfirm] = useState(false)
   const [clearLoading, setClearLoading] = useState(false)
   const [clearDone, setClearDone] = useState(false)
+  const [clearError, setClearError] = useState(false)
 
   function handleExport() {
     const backup = {
@@ -267,9 +268,14 @@ export default function Settings() {
   async function handleClearMonth() {
     if (isDemoMode) return
     setClearLoading(true)
-    await clearMonthData(clearMonthKey)
+    setClearError(false)
+    const result = await clearMonthData(clearMonthKey)
     setClearLoading(false)
     setClearConfirm(false)
+    if (result?.error) {
+      setClearError(true)
+      return
+    }
     setClearDone(true)
     setTimeout(() => setClearDone(false), 3000)
   }
@@ -858,7 +864,7 @@ export default function Settings() {
             <div className="flex flex-col sm:flex-row gap-2">
               <select
                 value={clearMonthKey}
-                onChange={e => { setClearMonthKey(e.target.value); setClearConfirm(false); setClearDone(false) }}
+                onChange={e => { setClearMonthKey(e.target.value); setClearConfirm(false); setClearDone(false); setClearError(false) }}
                 className="flex-1 min-w-0 text-sm px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
               >
                 {recentMonths.map(m => (
@@ -897,6 +903,14 @@ export default function Settings() {
               <p className="mt-2 text-sm text-emerald-600 flex items-center gap-1.5">
                 <CheckCircle size={14} /> Data cleared for {formatMonthLabel(clearMonthKey)}.
               </p>
+            )}
+            {clearError && (
+              <div className="mt-2 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg flex items-start gap-2">
+                <AlertTriangle size={14} className="text-red-500 mt-0.5 shrink-0" />
+                <p className="text-sm text-red-700 dark:text-red-300">
+                  Could not clear data for {formatMonthLabel(clearMonthKey)}. Reload the page to see what remains, then try again.
+                </p>
+              </div>
             )}
           </div>
 
