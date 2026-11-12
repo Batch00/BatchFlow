@@ -5,6 +5,7 @@ import { defaultCategories } from '../data/defaultCategories'
 import { getMonthKey } from '../utils/formatters'
 import { loadData, saveData } from '../utils/storage'
 import { getOccurrencesInMonth } from '../utils/recurringUtils'
+import { fetchAll } from '../utils/fetchAll'
 
 const AppContext = createContext(null)
 
@@ -194,11 +195,13 @@ export function AppProvider({ children }) {
 
   const refreshTransactions = useCallback(async () => {
     if (!user) return
-    const { data: txRows, error } = await supabase
+    const { data: txRows, error } = await fetchAll(() => supabase
       .from('transactions')
       .select('*, transaction_splits(*)')
       .eq('user_id', user.id)
       .order('date', { ascending: false })
+      .order('id'))
+    if (error) console.error('refreshTransactions query error:', error)
     if (!error && txRows) {
       setTransactions(txRows.map(dbToTransaction))
     }
@@ -412,12 +415,12 @@ export function AppProvider({ children }) {
         { data: ruleRows,     error: ruleErr     },
         { data: paycheckRows, error: paycheckErr },
       ] = await Promise.all([
-        supabase.from('categories')      .select('*')                      .eq('user_id', user.id).order('sort_order'),
-        supabase.from('subcategories')   .select('*')                      .eq('user_id', user.id).order('sort_order'),
-        supabase.from('transactions')    .select('*, transaction_splits(*)').eq('user_id', user.id).order('date', { ascending: false }),
-        supabase.from('budget_plans')    .select('*')                      .eq('user_id', user.id),
-        supabase.from('recurring_rules') .select('*')                      .eq('user_id', user.id).order('created_at'),
-        supabase.from('paycheck_plans')  .select('*')                      .eq('user_id', user.id).order('date'),
+        fetchAll(() => supabase.from('categories')      .select('*')                      .eq('user_id', user.id).order('sort_order').order('id')),
+        fetchAll(() => supabase.from('subcategories')   .select('*')                      .eq('user_id', user.id).order('sort_order').order('id')),
+        fetchAll(() => supabase.from('transactions')    .select('*, transaction_splits(*)').eq('user_id', user.id).order('date', { ascending: false }).order('id')),
+        fetchAll(() => supabase.from('budget_plans')    .select('*')                      .eq('user_id', user.id).order('month_key').order('id')),
+        fetchAll(() => supabase.from('recurring_rules') .select('*')                      .eq('user_id', user.id).order('created_at').order('id')),
+        fetchAll(() => supabase.from('paycheck_plans')  .select('*')                      .eq('user_id', user.id).order('date').order('id')),
       ])
 
       if (catErr || subErr || txErr || planErr || ruleErr || paycheckErr) {
