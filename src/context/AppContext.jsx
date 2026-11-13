@@ -6,8 +6,44 @@ import { getMonthKey } from '../utils/formatters'
 import { loadData, saveData } from '../utils/storage'
 import { getOccurrencesInMonth } from '../utils/recurringUtils'
 import { fetchAll } from '../utils/fetchAll'
+import { TABLES, COLUMNS, buildBackupV2, validateBackup, convertV1ToV2, remapIds } from '../utils/backup'
 
 const AppContext = createContext(null)
+
+// ── Backup helpers ───────────────────────────────────────────────────────────
+
+// One raw-row query per backup table, naming the contract columns and ordered by
+// id so fetchAll pages are stable. transaction_splits has no user_id, so it is
+// scoped through its parent transaction (RLS enforces the same server-side).
+function backupQuery(table, userId) {
+  const cols = COLUMNS[table].join(', ')
+  if (table === 'transaction_splits') {
+    return supabase.from(table)
+      .select(`${cols}, transactions!inner(user_id)`)
+      .eq('transactions.user_id', userId)
+      .order('id')
+  }
+  return supabase.from(table).select(cols).eq('user_id', userId).order('id')
+}
+
+function downloadJson(obj, filename) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  // Revoke later, not immediately, so a slow browser still finishes the download.
+  setTimeout(() => URL.revokeObjectURL(url), 60000)
+}
+
+// Local timestamp for file names: 2026-11-13-153012
+function fileStamp(d = new Date()) {
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+}
 
 // ── Data mappers ─────────────────────────────────────────────────────────────
 // Convert DB snake_case rows → app camelCase objects
@@ -1122,96 +1158,72 @@ export function AppProvider({ children }) {
 
   // ── Import all data (for Settings restore) ────────────────────────────────────
 
-  const importAllData = useCallback(async (backup) => {
+  // ── Export backup (version 2, raw database rows) ─────────────────────────────
+  // Reads every backup table straight from the database rather than from app
+  // state, so pending flags, rule links, rules and paycheck plans are all kept.
+  // Not a mutation: the read-only demo account may export.
+
+  const exportBackup = useCallback(async (filename) => {
+    if (!user) return { error: 'Not signed in.' }
+    const results = await Promise.all(TABLES.map(table => fetchAll(() => backupQuery(table, user.id))))
+    const failed = results.find(r => r.error)
+    if (failed) {
+      console.error('exportBackup: read failed:', failed.error)
+      return { error: failed.error.message || 'Could not read your data.' }
+    }
+    const rows = Object.fromEntries(TABLES.map((table, i) => [table, results[i].data]))
+    const backup = buildBackupV2(rows)
+    downloadJson(backup, filename)
+    return { error: null, backup }
+  }, [user])
+
+  // ── Import all data (for Settings restore) ────────────────────────────────────
+  // The whole restore runs in public.restore_backup (supabase/restore_backup.sql),
+  // one transaction, so a failure leaves the account exactly as it was.
+  // Returns { error: null } just before reloading, or { error, changed } where
+  // changed is false (nothing was written), true (the restore ran but the counts
+  // differ), or 'unknown' (the server never replied, so the outcome is unknown).
+
+  const importAllData = useCallback(async (file) => {
     if (blocked()) return
-    // Delete everything for this user; subcategories + budget_plans cascade from categories
-    await Promise.all([
-      supabase.from('transactions').delete().eq('user_id', user.id),
-      supabase.from('categories').delete().eq('user_id', user.id),
-    ])
+    const check = validateBackup(file)
+    if (!check.ok) return { error: check.errors.join(' '), changed: false }
 
-    // Insert categories
-    const catInserts = (backup.categories ?? []).map((c, i) => ({
-      id: c.id, user_id: user.id, name: c.name, type: c.type,
-      color: c.color ?? '#6366f1', sort_order: i,
-    }))
-    if (catInserts.length > 0) {
-      await supabase.from('categories').insert(catInserts)
+    // Safety copy of the current data first. No copy, no restore.
+    const safety = await exportBackup(`batchflow-pre-restore-safety-copy-${fileStamp()}.json`)
+    if (safety.error) {
+      return { error: `Could not download a safety copy of your current data: ${safety.error}`, changed: false }
     }
 
-    // Insert subcategories
-    const subInserts = (backup.categories ?? []).flatMap((c, _ci) =>
-      (c.subcategories ?? []).map((s, si) => ({
-        id: s.id, category_id: c.id, user_id: user.id, name: s.name, sort_order: si,
-      }))
-    )
-    if (subInserts.length > 0) {
-      await supabase.from('subcategories').insert(subInserts)
+    let payload
+    let sent
+    try {
+      payload = remapIds(check.version === 1 ? convertV1ToV2(file) : file)
+      sent = validateBackup(payload)
+    } catch (err) {
+      return { error: err.message, changed: false }
+    }
+    if (!sent.ok) return { error: sent.errors.join(' '), changed: false }
+
+    const { data: got, error } = await supabase.rpc('restore_backup', { payload })
+    if (error) {
+      console.error('restore_backup failed:', error)
+      // A database or API error carries a code and means the transaction rolled
+      // back. No code means the request failed in transit and the reply is lost.
+      return { error: error.message || 'The restore failed.', changed: error.code ? false : 'unknown' }
     }
 
-    // Insert flat (non-split) transactions. A backup entry with an empty `splits`
-    // array is flat, not split — treating it as split would import the row with
-    // is_split = true and nothing under it.
-    const flatTxns = (backup.transactions ?? []).filter(t => !(t.splits?.length > 0))
-    if (flatTxns.length > 0) {
-      await supabase.from('transactions').insert(flatTxns.map(t => ({
-        id: t.id, user_id: user.id, date: t.date, amount: t.amount, type: t.type,
-        merchant: t.merchant || null, notes: t.notes || null,
-        is_split: false, category_id: t.categoryId, subcategory_id: t.subcategoryId || null,
-      })))
-    }
-
-    // Insert split transactions sequentially (each needs its splits row after)
-    for (const t of (backup.transactions ?? []).filter(t => t.splits?.length > 0)) {
-      const { data: txRow } = await supabase
-        .from('transactions')
-        .insert({
-          id: t.id, user_id: user.id, date: t.date, amount: t.amount, type: t.type,
-          merchant: t.merchant || null, notes: t.notes || null,
-          is_split: true, category_id: null, subcategory_id: null,
-        })
-        .select().single()
-
-      if (!txRow) continue
-
-      const { error: splitErr } = await supabase.from('transaction_splits').insert(
-        t.splits.map(s => ({
-          transaction_id: txRow.id,
-          category_id: s.categoryId,
-          subcategory_id: s.subcategoryId || null,
-          amount: s.amount,
-        }))
-      )
-      // Same rule as addTransaction: a parent whose splits did not land must not
-      // survive the import as a flagged split with nothing under it.
-      if (splitErr) {
-        console.error(`Import: splits failed for transaction ${txRow.id}, skipping it:`, splitErr)
-        await supabase.from('transactions').delete().eq('id', txRow.id).eq('user_id', user.id)
-      }
-    }
-
-    // Insert budget plans
-    const planInserts = []
-    for (const [monthKey, monthData] of Object.entries(backup.budgets ?? {})) {
-      for (const [catId, amt] of Object.entries(monthData.planned ?? {})) {
-        planInserts.push({
-          user_id: user.id, month_key: monthKey,
-          category_id: catId, subcategory_id: null, planned_amount: amt,
-        })
-      }
-      for (const [subId, amt] of Object.entries(monthData.subcategoryPlanned ?? {})) {
-        planInserts.push({
-          user_id: user.id, month_key: monthKey,
-          category_id: null, subcategory_id: subId, planned_amount: amt,
-        })
-      }
-    }
-    if (planInserts.length > 0) {
-      await supabase.from('budget_plans').insert(planInserts)
+    const mismatches = TABLES.filter(t => (got?.[t] ?? null) !== sent.counts[t])
+    if (mismatches.length > 0) {
+      const detail = mismatches
+        .map(t => `${t}: sent ${sent.counts[t] ?? 'none'}, restored ${got?.[t] ?? 'none'}`)
+        .join('; ')
+      return { error: `Row counts do not match (${detail}).`, changed: true }
     }
 
     window.location.reload()
-  }, [user])
+    return { error: null }
+  }, [user, exportBackup])
 
   // ── Derived ───────────────────────────────────────────────────────────────────
 
@@ -1273,6 +1285,7 @@ export function AppProvider({ children }) {
     setSubcategoryBudgetAmount,
     copyBudget,
     moveSubcategory,
+    exportBackup,
     importAllData,
     clearMonthData,
     clearAllData,
@@ -1290,7 +1303,7 @@ export function AppProvider({ children }) {
     resetMonthBudget, setSubcategoryBudgetAmount, copyBudget, moveSubcategory,
     addCategory, updateCategory, deleteCategory,
     addSubcategory, updateSubcategory, deleteSubcategory,
-    moveCategory, importAllData, clearMonthData, clearAllData,
+    moveCategory, exportBackup, importAllData, clearMonthData, clearAllData,
   ])
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>

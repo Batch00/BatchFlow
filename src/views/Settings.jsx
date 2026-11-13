@@ -9,6 +9,7 @@ import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
 import { loadData, saveData } from '../utils/storage'
 import { formatMonthLabel, getTodayString } from '../utils/formatters'
+import { validateBackup } from '../utils/backup'
 
 const APP_VERSION = '1.3.0'
 
@@ -48,16 +49,8 @@ function getRecentMonths() {
   return months
 }
 
-function isValidBackup(data) {
-  return (
-    data !== null &&
-    typeof data === 'object' &&
-    Array.isArray(data.categories) &&
-    Array.isArray(data.transactions) &&
-    typeof data.budgets === 'object' &&
-    data.budgets !== null &&
-    typeof data.currentMonth === 'string'
-  )
+function plural(n, one, many) {
+  return `${n} ${n === 1 ? one : many}`
 }
 
 // Wraps an editing control that the read-only demo account cannot use. The reason is
@@ -78,8 +71,8 @@ function DemoLock({ children, active }) {
 
 export default function Settings() {
   const {
-    categories, transactions, budgets, currentMonth,
-    importAllData, clearMonthData, clearAllData,
+    currentMonth,
+    exportBackup, importAllData, clearMonthData, clearAllData,
     theme, setTheme,
   } = useApp()
   const { user, updateEmail, updatePassword, signOut, isDemoMode } = useAuth()
@@ -192,9 +185,13 @@ export default function Settings() {
 
   // ── Data Management ───────────────────────────────────────────────────────────
 
-  const [importState, setImportState] = useState(null) // null | { data, stats } | 'error'
+  const [importState, setImportState] = useState(null) // null | { data, check } | 'error'
   const [importing, setImporting] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
+  const [errorList, setErrorList] = useState([])
+  const [restoreResult, setRestoreResult] = useState(null) // null | { error, changed }
+  const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState('')
   const fileInputRef = useRef(null)
 
   const recentMonths = getRecentMonths()
@@ -204,50 +201,38 @@ export default function Settings() {
   const [clearDone, setClearDone] = useState(false)
   const [clearError, setClearError] = useState(false)
 
-  function handleExport() {
-    const backup = {
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      currentMonth,
-      categories,
-      transactions,
-      budgets,
-    }
-    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `batchflow-backup-${getTodayString()}.json`
-    a.click()
-    URL.revokeObjectURL(url)
+  async function handleExport() {
+    setExporting(true)
+    setExportError('')
+    const result = await exportBackup(`batchflow-backup-${getTodayString()}.json`)
+    setExporting(false)
+    if (result.error) setExportError(result.error)
   }
 
   function handleFileChange(e) {
     if (isDemoMode) return
     const file = e.target.files[0]
     if (!file) return
+    setRestoreResult(null)
     const reader = new FileReader()
     reader.onload = (ev) => {
+      let data
       try {
-        const data = JSON.parse(ev.target.result)
-        if (!isValidBackup(data)) {
-          setErrorMsg('File is not a valid BatchFlow backup.')
-          setImportState('error')
-          return
-        }
-        setImportState({
-          data,
-          stats: {
-            transactions: data.transactions.length,
-            categories: data.categories.length,
-            months: Object.keys(data.budgets).length,
-            exportedAt: data.exportedAt ?? null,
-          },
-        })
+        data = JSON.parse(ev.target.result)
       } catch {
         setErrorMsg('Could not parse the file. Make sure it is a valid JSON file.')
+        setErrorList([])
         setImportState('error')
+        return
       }
+      const check = validateBackup(data)
+      if (!check.ok) {
+        setErrorMsg('This file cannot be restored. Nothing was changed.')
+        setErrorList(check.errors)
+        setImportState('error')
+        return
+      }
+      setImportState({ data, check })
     }
     reader.readAsText(file)
     e.target.value = ''
@@ -256,13 +241,18 @@ export default function Settings() {
   async function handleConfirmImport() {
     if (isDemoMode) return
     setImporting(true)
-    await importAllData(importState.data)
-    // importAllData calls window.location.reload() on completion
+    setRestoreResult(null)
+    const result = await importAllData(importState.data)
+    // On success importAllData reloads the page, so only failures get here.
+    setImporting(false)
+    if (result?.error) setRestoreResult(result)
   }
 
   function handleCancelImport() {
     setImportState(null)
     setErrorMsg('')
+    setErrorList([])
+    setRestoreResult(null)
   }
 
   async function handleClearMonth() {
@@ -771,17 +761,26 @@ export default function Settings() {
               <div>
                 <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Export Backup</h3>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                  Download a full JSON backup of all your transactions, budgets, and categories.
+                  Download a full JSON backup of your categories, transactions, budgets, recurring rules, and paycheck plans.
                 </p>
               </div>
               <button
                 onClick={handleExport}
-                className="flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors shrink-0"
+                disabled={exporting}
+                className="flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors shrink-0"
               >
                 <Download size={15} />
-                Export JSON
+                {exporting ? 'Exporting…' : 'Export JSON'}
               </button>
             </div>
+            {exportError && (
+              <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg flex items-start gap-2">
+                <AlertTriangle size={14} className="text-red-500 mt-0.5 shrink-0" />
+                <p className="text-sm text-red-700 dark:text-red-300 min-w-0 break-words">
+                  Export failed: {exportError}
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Import */}
@@ -790,7 +789,7 @@ export default function Settings() {
               <div>
                 <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Import Backup</h3>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                  Restore from a previously exported JSON backup. This will overwrite all current data.
+                  Restore from a previously exported JSON backup. This replaces all current data. A safety copy of your current data is downloaded first.
                 </p>
               </div>
               <DemoLock active={isDemoMode}>
@@ -814,45 +813,102 @@ export default function Settings() {
             {importState === 'error' && (
               <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg flex items-start gap-2">
                 <AlertTriangle size={14} className="text-red-500 mt-0.5 shrink-0" />
-                <p className="text-sm text-red-700 dark:text-red-300">{errorMsg}</p>
+                <div className="min-w-0">
+                  <p className="text-sm text-red-700 dark:text-red-300">{errorMsg}</p>
+                  {errorList.length > 0 && (
+                    <ul className="mt-2 list-disc pl-4 space-y-1 text-xs text-red-700 dark:text-red-300 break-words">
+                      {errorList.map((msg, i) => <li key={i}>{msg}</li>)}
+                    </ul>
+                  )}
+                </div>
               </div>
             )}
 
-            {importState && importState !== 'error' && (
+            {importState && importState !== 'error' && (() => {
+              const { check } = importState
+              const c = check.counts
+              const exportedAt = importState.data.exportedAt
+              return (
               <div className="mt-4 p-4 bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 rounded-lg">
                 <div className="flex items-start gap-2 mb-2">
                   <AlertTriangle size={14} className="text-amber-600 mt-0.5 shrink-0" />
                   <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
-                    This will replace all current data and cannot be undone.
+                    This will replace all current data. A safety copy of your current data is downloaded first.
                   </p>
                 </div>
-                <p className="text-sm text-slate-600 dark:text-slate-300 mb-1 ml-5">
-                  <strong>{importState.stats.transactions}</strong> transaction{importState.stats.transactions !== 1 ? 's' : ''},
-                  {' '}<strong>{importState.stats.categories}</strong> categor{importState.stats.categories !== 1 ? 'ies' : 'y'},
-                  {' '}<strong>{importState.stats.months}</strong> budget month{importState.stats.months !== 1 ? 's' : ''}
-                </p>
-                {importState.stats.exportedAt && (
-                  <p className="text-xs text-slate-400 mb-4 ml-5">
-                    Exported {new Date(importState.stats.exportedAt).toLocaleString()}
+                <ul className="text-sm text-slate-600 dark:text-slate-300 mb-1 ml-5 space-y-0.5">
+                  <li>{plural(c.categories, 'category', 'categories')}, {plural(c.subcategories, 'subcategory', 'subcategories')}</li>
+                  <li>
+                    {plural(c.transactions, 'transaction', 'transactions')}
+                    {check.pending > 0 && ` (${check.pending} pending)`}
+                    , {plural(c.transaction_splits, 'split row', 'split rows')}
+                  </li>
+                  <li>{plural(c.budget_plans, 'budget plan', 'budget plans')}</li>
+                  {c.recurring_rules !== null && <li>{plural(c.recurring_rules, 'recurring rule', 'recurring rules')}</li>}
+                  {c.paycheck_plans !== null && <li>{plural(c.paycheck_plans, 'paycheck plan', 'paycheck plans')}</li>}
+                </ul>
+                {exportedAt && (
+                  <p className="text-xs text-slate-400 mb-2 ml-5">
+                    Exported {new Date(exportedAt).toLocaleString()}
                   </p>
+                )}
+                {check.version === 1 && (
+                  <div className="mt-3 ml-5 p-3 bg-white/60 dark:bg-slate-800/60 border border-amber-200 dark:border-amber-800 rounded-lg text-sm text-slate-700 dark:text-slate-300 space-y-1">
+                    <p className="font-medium">This is an older (version 1) backup.</p>
+                    <p>It has no recurring rules or paycheck plans.</p>
+                    <p>Pending items will come back as confirmed.</p>
+                    <p>Your existing recurring rules and paycheck plans are kept, but the recurring rules lose their category links.</p>
+                  </div>
+                )}
+                {restoreResult && (
+                  <div className="mt-3 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg flex items-start gap-2">
+                    <AlertTriangle size={14} className="text-red-500 mt-0.5 shrink-0" />
+                    <div className="min-w-0 text-sm text-red-700 dark:text-red-300 break-words space-y-1">
+                      <p>{restoreResult.error}</p>
+                      {restoreResult.changed === false && (
+                        <p className="font-medium">Nothing was changed.</p>
+                      )}
+                      {restoreResult.changed === 'unknown' && (
+                        <p className="font-medium">
+                          The server did not reply, so it is not known whether the restore ran. Reload to check. The safety copy was downloaded.
+                        </p>
+                      )}
+                      {restoreResult.changed === true && (
+                        <>
+                          <p className="font-medium">
+                            The restore ran, but the counts above do not match what was saved. Your previous data is in the safety copy that was downloaded.
+                          </p>
+                          <button
+                            onClick={() => window.location.reload()}
+                            className="mt-1 px-3 py-1.5 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors"
+                          >
+                            Reload
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
                 )}
                 <div className="flex gap-2 mt-3">
                   <button
                     onClick={handleConfirmImport}
-                    disabled={importing}
+                    // After a restore that may have run, the next step is a reload, not a retry.
+                    disabled={importing || (restoreResult && restoreResult.changed !== false)}
                     className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
                   >
                     {importing ? 'Importing…' : 'Confirm Import'}
                   </button>
                   <button
                     onClick={handleCancelImport}
-                    className="px-4 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors"
+                    disabled={importing}
+                    className="px-4 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-600 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
                   >
                     Cancel
                   </button>
                 </div>
               </div>
-            )}
+              )
+            })()}
           </div>
 
           {/* Clear month */}
