@@ -26,25 +26,6 @@ function backupQuery(table, userId) {
   return supabase.from(table).select(cols).eq('user_id', userId).order('id')
 }
 
-function downloadJson(obj, filename) {
-  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  // Revoke later, not immediately, so a slow browser still finishes the download.
-  setTimeout(() => URL.revokeObjectURL(url), 60000)
-}
-
-// Local timestamp for file names: 2026-11-13-153012
-function fileStamp(d = new Date()) {
-  const p = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
-}
-
 // ── Data mappers ─────────────────────────────────────────────────────────────
 // Convert DB snake_case rows → app camelCase objects
 
@@ -1158,48 +1139,48 @@ export function AppProvider({ children }) {
 
   // ── Import all data (for Settings restore) ────────────────────────────────────
 
-  // ── Export backup (version 2, raw database rows) ─────────────────────────────
+  // ── Read backup (version 2, raw database rows) ───────────────────────────────
   // Reads every backup table straight from the database rather than from app
   // state, so pending flags, rule links, rules and paycheck plans are all kept.
+  // Returns { error, backup } and downloads nothing: Settings reads ahead of
+  // time so the download itself can run synchronously inside the click.
   // Not a mutation: the read-only demo account may export.
 
-  const exportBackup = useCallback(async (filename) => {
-    if (!user) return { error: 'Not signed in.' }
+  const readBackup = useCallback(async () => {
+    if (!user) return { error: 'Not signed in.', backup: null }
     const results = await Promise.all(TABLES.map(table => fetchAll(() => backupQuery(table, user.id))))
     const failed = results.find(r => r.error)
     if (failed) {
-      console.error('exportBackup: read failed:', failed.error)
-      return { error: failed.error.message || 'Could not read your data.' }
+      console.error('readBackup: read failed:', failed.error)
+      return { error: failed.error.message || 'Could not read your data.', backup: null }
     }
     const rows = Object.fromEntries(TABLES.map((table, i) => [table, results[i].data]))
-    const backup = buildBackupV2(rows)
-    downloadJson(backup, filename)
-    return { error: null, backup }
+    return { error: null, backup: buildBackupV2(rows) }
   }, [user])
 
   // ── Import all data (for Settings restore) ────────────────────────────────────
   // The whole restore runs in public.restore_backup (supabase/restore_backup.sql),
   // one transaction, so a failure leaves the account exactly as it was.
-  // Returns { error: null } just before reloading, or { error, changed } where
-  // changed is false (nothing was written), true (the restore ran but the counts
-  // differ), or 'unknown' (the server never replied, so the outcome is unknown).
+  // The caller must already have downloaded a safety copy (see Settings: the
+  // copy is read before Confirm is enabled and downloaded first thing in the
+  // click). Returns { error: null } just before reloading, or { error, changed }
+  // where changed is false (nothing was written), true (the restore ran but the
+  // counts differ), or 'unknown' (the server never replied).
 
   const importAllData = useCallback(async (file) => {
     if (blocked()) return
-    const check = validateBackup(file)
+    // Rules already in the account survive a restore whose file has none
+    // (version 1), so pending items may keep links to them.
+    const existingRuleIds = recurringRulesRef.current.map(r => r.id)
+    const check = validateBackup(file, { existingRuleIds })
     if (!check.ok) return { error: check.errors.join(' '), changed: false }
-
-    // Safety copy of the current data first. No copy, no restore.
-    const safety = await exportBackup(`batchflow-pre-restore-safety-copy-${fileStamp()}.json`)
-    if (safety.error) {
-      return { error: `Could not download a safety copy of your current data: ${safety.error}`, changed: false }
-    }
 
     let payload
     let sent
     try {
-      payload = remapIds(check.version === 1 ? convertV1ToV2(file) : file)
-      sent = validateBackup(payload)
+      const v2 = check.version === 1 ? convertV1ToV2(file, { existingRuleIds }).backup : file
+      payload = remapIds(v2)
+      sent = validateBackup(payload, { existingRuleIds })
     } catch (err) {
       return { error: err.message, changed: false }
     }
@@ -1223,7 +1204,7 @@ export function AppProvider({ children }) {
 
     window.location.reload()
     return { error: null }
-  }, [user, exportBackup])
+  }, [user])
 
   // ── Derived ───────────────────────────────────────────────────────────────────
 
@@ -1285,7 +1266,7 @@ export function AppProvider({ children }) {
     setSubcategoryBudgetAmount,
     copyBudget,
     moveSubcategory,
-    exportBackup,
+    readBackup,
     importAllData,
     clearMonthData,
     clearAllData,
@@ -1303,7 +1284,7 @@ export function AppProvider({ children }) {
     resetMonthBudget, setSubcategoryBudgetAmount, copyBudget, moveSubcategory,
     addCategory, updateCategory, deleteCategory,
     addSubcategory, updateSubcategory, deleteSubcategory,
-    moveCategory, exportBackup, importAllData, clearMonthData, clearAllData,
+    moveCategory, readBackup, importAllData, clearMonthData, clearAllData,
   ])
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>

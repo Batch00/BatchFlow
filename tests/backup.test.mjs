@@ -178,9 +178,11 @@ test('version 1 file converts and validates', () => {
     budget_plans: 3,
     paycheck_plans: null,
   })
-  assert.equal(check.pending, 0, 'version 1 restores everything as confirmed')
+  assert.equal(check.pending, 1, 'the pending item in the file stays pending')
+  assert.equal(check.droppedBudgetEntries, 0)
 
-  const v2 = convertV1ToV2(v1)
+  const { backup: v2, droppedBudgetEntries } = convertV1ToV2(v1)
+  assert.equal(droppedBudgetEntries, 0)
   assert.equal(v2.format, BACKUP_FORMAT)
   assert.equal(v2.version, 2)
   assert.equal(v2.recurring_rules, null)
@@ -195,9 +197,11 @@ test('version 1 file converts and validates', () => {
   assert.equal(t2.category_id, null)
   assert.equal(v2.transaction_splits.filter(s => s.transaction_id === 't2').length, 2)
   assert.equal(t3.is_split, false, 'an empty splits array is flat')
-  assert.equal(t3.is_pending, false)
-  assert.equal(t3.scheduled_date, null)
-  assert.equal(t3.recurring_rule_id, null)
+  assert.equal(t3.is_pending, true)
+  assert.equal(t3.scheduled_date, '2026-10-04')
+  assert.equal(t3.recurring_rule_id, null, 'no existing rule ids given, so the link is dropped')
+  assert.equal(t1.is_pending, false, 'no isPending in the file means confirmed')
+  assert.equal(t1.scheduled_date, null)
 
   const planned = v2.budget_plans.map(p => [p.month_key, p.category_id, p.subcategory_id, p.planned_amount])
   assert.deepEqual(planned, [
@@ -213,6 +217,84 @@ test('version 1 file converts and validates', () => {
   assertReferencesPreserved(v2, remapped)
   assert.equal(remapped.recurring_rules, null)
   assert.equal(remapped.paycheck_plans, null)
+})
+
+test('version 1 pending items keep a rule link only when the rule exists in the account', () => {
+  const v1 = validV1()
+  v1.transactions.push({
+    id: 't4', date: '2026-10-20', amount: 15, type: 'expense', categoryId: 'c1', subcategoryId: null,
+    isPending: true, scheduledDate: '2026-10-20', recurringRuleId: 'gone-rule',
+  })
+  const existingRuleIds = ['old-rule', 'other-rule']
+
+  const { backup: v2 } = convertV1ToV2(v1, { existingRuleIds })
+  const byId = Object.fromEntries(v2.transactions.map(t => [t.id, t]))
+  assert.equal(byId.t3.recurring_rule_id, 'old-rule', 'rule still in the account: link kept')
+  assert.equal(byId.t3.is_pending, true)
+  assert.equal(byId.t4.recurring_rule_id, null, 'rule not in the account: link dropped')
+  assert.equal(byId.t4.is_pending, true, 'still pending without its rule')
+  assert.equal(byId.t4.scheduled_date, '2026-10-20')
+  assert.equal(byId.t1.recurring_rule_id, null)
+
+  const check = validateBackup(v1, { existingRuleIds })
+  assert.equal(check.ok, true, check.errors.join('\n'))
+  assert.equal(check.pending, 2)
+
+  // The kept link is an id in the account, not in the file, so remapIds
+  // passes it through and the payload still validates against the account.
+  const remapped = remapIds(v2)
+  const t3 = remapped.transactions[v2.transactions.findIndex(t => t.id === 't3')]
+  assert.equal(t3.recurring_rule_id, 'old-rule')
+  assert.notEqual(t3.id, 't3')
+  const after = validateBackup(remapped, { existingRuleIds })
+  assert.equal(after.ok, true, after.errors.join('\n'))
+  assert.deepEqual(after.counts, check.counts)
+
+  // Without the account's rule ids the same payload is refused.
+  const refused = validateBackup(remapped)
+  assert.equal(refused.ok, false)
+  assert.ok(refused.errors.some(e => /not in the file or in your account/.test(e)))
+})
+
+test('version 1 isPending other than true is confirmed', () => {
+  const v1 = validV1()
+  v1.transactions[0].isPending = 'yes'
+  v1.transactions[1].isPending = false
+  const { backup } = convertV1ToV2(v1)
+  assert.equal(backup.transactions[0].is_pending, false)
+  assert.equal(backup.transactions[1].is_pending, false)
+})
+
+test('version 1 budget entries for a missing category or subcategory are dropped and counted', () => {
+  const v1 = validV1()
+  v1.budgets['2026-10'].planned['c-gone'] = 10
+  v1.budgets['2026-10'].subcategoryPlanned['s-gone'] = 5
+  v1.budgets['2026-09'] = { planned: { 'c-gone-too': 1, c1: 250 }, subcategoryPlanned: {} }
+
+  const { backup, droppedBudgetEntries } = convertV1ToV2(v1)
+  assert.equal(droppedBudgetEntries, 3)
+  const planned = backup.budget_plans.map(p => [p.month_key, p.category_id, p.subcategory_id, p.planned_amount])
+  assert.deepEqual(planned, [
+    ['2026-10', 'c1', null, 300],
+    ['2026-10', 'c2', null, 2000],
+    ['2026-10', null, 's1', 200],
+    ['2026-09', 'c1', null, 250],
+  ])
+
+  const check = validateBackup(v1)
+  assert.equal(check.ok, true, check.errors.join('\n'))
+  assert.equal(check.droppedBudgetEntries, 3)
+  assert.equal(check.counts.budget_plans, 4)
+})
+
+test('version 2 files report no dropped budget entries', () => {
+  assert.equal(validateBackup(validV2()).droppedBudgetEntries, 0)
+})
+
+test('version 2 with no recurring rules accepts links to rules in the account', () => {
+  const file = validV2()
+  file.recurring_rules = null
+  assert.equal(validateBackup(file, { existingRuleIds: ['rule-pay'] }).ok, true)
 })
 
 test('a file with no version field is read as version 1', () => {
@@ -294,7 +376,7 @@ rejects('subcategory to a missing category', f => { f.subcategories[0].category_
 rejects('transaction to a missing category', f => { f.transactions[0].category_id = 'cat-gone' }, /Transaction 1 refers to category "cat-gone"/)
 rejects('transaction to a missing subcategory', f => { f.transactions[0].subcategory_id = 'sub-gone' }, /Transaction 1 refers to subcategory "sub-gone"/)
 rejects('transaction to a missing recurring rule', f => { f.transactions[1].recurring_rule_id = 'rule-gone' }, /Transaction 2 refers to recurring rule "rule-gone"/)
-rejects('transaction to a rule when the file has no rules', f => { f.recurring_rules = null }, /file has no recurring rules/)
+rejects('transaction to a rule in neither the file nor the account', f => { f.recurring_rules = null }, /refers to recurring rule "rule-pay", which is not in the file or in your account/)
 rejects('split to a missing transaction', f => { f.transaction_splits[0].transaction_id = 'txn-gone' }, /Split row 1 refers to transaction "txn-gone"/)
 rejects('split to a missing category', f => { f.transaction_splits[0].category_id = 'cat-gone' }, /Split row 1 refers to category "cat-gone"/)
 rejects('split to a missing subcategory', f => { f.transaction_splits[0].subcategory_id = 'sub-gone' }, /Split row 1 refers to subcategory "sub-gone"/)
@@ -315,6 +397,6 @@ rejects('split transaction with its own category', f => { f.transactions[2].cate
 rejects('v1 budgets not an object', f => { f.budgets = [] }, /"budgets" is missing or is not an object/, validV1)
 rejects('v1 transactions missing', f => { delete f.transactions }, /"transactions" is missing/, validV1)
 rejects('v1 splits not a list', f => { f.transactions[1].splits = 'x' }, /Transaction 2 has splits that are not a list/, validV1)
-rejects('v1 budget to a missing category', f => { f.budgets['2026-10'].planned['c-gone'] = 10 }, /refers to category "c-gone"/, validV1)
+rejects('v2 budget plan to a missing category stays strict', f => { f.budget_plans.push({ id: 'plan-x', month_key: '2026-11', category_id: 'cat-gone', subcategory_id: null, planned_amount: 1 }) }, /Budget plan 3 refers to category "cat-gone"/)
 rejects('v1 split to a missing category', f => { f.transactions[1].splits[0].categoryId = 'c-gone' }, /Split row 1 refers to category "c-gone"/, validV1)
 rejects('v1 flat transaction without a category', f => { f.transactions[0].categoryId = null }, /no category and is not a split/, validV1)

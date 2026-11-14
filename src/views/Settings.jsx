@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Download, Upload, AlertTriangle, Smartphone,
   Mail, Lock, Trash2, CheckCircle, Info,
@@ -10,6 +10,7 @@ import { supabase } from '../lib/supabase'
 import { loadData, saveData } from '../utils/storage'
 import { formatMonthLabel, getTodayString } from '../utils/formatters'
 import { validateBackup } from '../utils/backup'
+import { downloadJson, fileStamp } from '../utils/download'
 
 const APP_VERSION = '1.3.0'
 
@@ -72,7 +73,8 @@ function DemoLock({ children, active }) {
 export default function Settings() {
   const {
     currentMonth,
-    exportBackup, importAllData, clearMonthData, clearAllData,
+    categories, transactions, budgets, recurringRules, paycheckPlans,
+    readBackup, importAllData, clearMonthData, clearAllData,
     theme, setTheme,
   } = useApp()
   const { user, updateEmail, updatePassword, signOut, isDemoMode } = useAuth()
@@ -190,9 +192,17 @@ export default function Settings() {
   const [errorMsg, setErrorMsg] = useState('')
   const [errorList, setErrorList] = useState([])
   const [restoreResult, setRestoreResult] = useState(null) // null | { error, changed }
-  const [exporting, setExporting] = useState(false)
-  const [exportError, setExportError] = useState('')
   const fileInputRef = useRef(null)
+
+  // Backups are read from the database ahead of the click, so the click itself
+  // can start the download synchronously (see utils/download.js). Each read has
+  // an id so a slower earlier read never overwrites a newer one.
+  // { status: 'preparing' | 'ready' | 'error', backup, error }
+  const [exportCopy, setExportCopy] = useState({ status: 'preparing', backup: null, error: '' })
+  const exportReadId = useRef(0)
+  // Safety copy for a restore, read once a file has passed validation. null when no file.
+  const [safety, setSafety] = useState(null)
+  const safetyReadId = useRef(0)
 
   const recentMonths = getRecentMonths()
   const [clearMonthKey, setClearMonthKey] = useState(currentMonth)
@@ -201,12 +211,38 @@ export default function Settings() {
   const [clearDone, setClearDone] = useState(false)
   const [clearError, setClearError] = useState(false)
 
-  async function handleExport() {
-    setExporting(true)
-    setExportError('')
-    const result = await exportBackup(`batchflow-backup-${getTodayString()}.json`)
-    setExporting(false)
-    if (result.error) setExportError(result.error)
+  const prepareExport = useCallback(async () => {
+    const id = ++exportReadId.current
+    setExportCopy({ status: 'preparing', backup: null, error: '' })
+    const { error, backup } = await readBackup()
+    if (id !== exportReadId.current) return
+    setExportCopy(error ? { status: 'error', backup: null, error } : { status: 'ready', backup, error: '' })
+  }, [readBackup])
+
+  // Read on mount, and again whenever the loaded data changes (an edit here,
+  // a clear month, or a realtime update from another tab), so the prepared
+  // export is never older than what the app shows.
+  useEffect(() => {
+    prepareExport()
+  }, [prepareExport, categories, transactions, budgets, recurringRules, paycheckPlans])
+
+  function handleExport() {
+    if (exportCopy.status === 'error') { prepareExport(); return }
+    if (exportCopy.status !== 'ready') return
+    downloadJson(exportCopy.backup, `batchflow-backup-${getTodayString()}.json`)
+  }
+
+  async function prepareSafetyCopy() {
+    const id = ++safetyReadId.current
+    setSafety({ status: 'preparing', backup: null, error: '' })
+    const { error, backup } = await readBackup()
+    if (id !== safetyReadId.current) return
+    setSafety(error ? { status: 'error', backup: null, error } : { status: 'ready', backup, error: '' })
+  }
+
+  function discardSafetyCopy() {
+    safetyReadId.current++
+    setSafety(null)
   }
 
   function handleFileChange(e) {
@@ -214,6 +250,7 @@ export default function Settings() {
     const file = e.target.files[0]
     if (!file) return
     setRestoreResult(null)
+    discardSafetyCopy()
     const reader = new FileReader()
     reader.onload = (ev) => {
       let data
@@ -225,7 +262,7 @@ export default function Settings() {
         setImportState('error')
         return
       }
-      const check = validateBackup(data)
+      const check = validateBackup(data, { existingRuleIds: recurringRules.map(r => r.id) })
       if (!check.ok) {
         setErrorMsg('This file cannot be restored. Nothing was changed.')
         setErrorList(check.errors)
@@ -233,22 +270,33 @@ export default function Settings() {
         return
       }
       setImportState({ data, check })
+      prepareSafetyCopy()
     }
     reader.readAsText(file)
     e.target.value = ''
   }
 
-  async function handleConfirmImport() {
-    if (isDemoMode) return
+  // Not async on purpose: the safety copy download has to start before any
+  // await, while the browser still counts it as part of the click.
+  function handleConfirmImport() {
+    if (isDemoMode || importing || safety?.status !== 'ready') return
+    downloadJson(safety.backup, `batchflow-pre-restore-safety-copy-${fileStamp()}.json`)
     setImporting(true)
     setRestoreResult(null)
-    const result = await importAllData(importState.data)
-    // On success importAllData reloads the page, so only failures get here.
-    setImporting(false)
-    if (result?.error) setRestoreResult(result)
+    importAllData(importState.data)
+      .then(result => {
+        // On success importAllData reloads the page, so only failures get here.
+        setImporting(false)
+        if (result?.error) setRestoreResult(result)
+      })
+      .catch(err => {
+        setImporting(false)
+        setRestoreResult({ error: err?.message || 'The restore failed.', changed: 'unknown' })
+      })
   }
 
   function handleCancelImport() {
+    discardSafetyCopy()
     setImportState(null)
     setErrorMsg('')
     setErrorList([])
@@ -766,18 +814,19 @@ export default function Settings() {
               </div>
               <button
                 onClick={handleExport}
-                disabled={exporting}
+                disabled={exportCopy.status === 'preparing'}
                 className="flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors shrink-0"
               >
                 <Download size={15} />
-                {exporting ? 'Exporting…' : 'Export JSON'}
+                {exportCopy.status === 'preparing' ? 'Preparing…'
+                  : exportCopy.status === 'error' ? 'Retry' : 'Export JSON'}
               </button>
             </div>
-            {exportError && (
+            {exportCopy.status === 'error' && (
               <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg flex items-start gap-2">
                 <AlertTriangle size={14} className="text-red-500 mt-0.5 shrink-0" />
                 <p className="text-sm text-red-700 dark:text-red-300 min-w-0 break-words">
-                  Export failed: {exportError}
+                  Could not read your data for the export: {exportCopy.error}
                 </p>
               </div>
             )}
@@ -846,6 +895,11 @@ export default function Settings() {
                   <li>{plural(c.budget_plans, 'budget plan', 'budget plans')}</li>
                   {c.recurring_rules !== null && <li>{plural(c.recurring_rules, 'recurring rule', 'recurring rules')}</li>}
                   {c.paycheck_plans !== null && <li>{plural(c.paycheck_plans, 'paycheck plan', 'paycheck plans')}</li>}
+                  {check.droppedBudgetEntries > 0 && (
+                    <li>
+                      {plural(check.droppedBudgetEntries, 'budget entry', 'budget entries')} skipped: the category or subcategory is not in the file
+                    </li>
+                  )}
                 </ul>
                 {exportedAt && (
                   <p className="text-xs text-slate-400 mb-2 ml-5">
@@ -856,8 +910,23 @@ export default function Settings() {
                   <div className="mt-3 ml-5 p-3 bg-white/60 dark:bg-slate-800/60 border border-amber-200 dark:border-amber-800 rounded-lg text-sm text-slate-700 dark:text-slate-300 space-y-1">
                     <p className="font-medium">This is an older (version 1) backup.</p>
                     <p>It has no recurring rules or paycheck plans.</p>
-                    <p>Pending items will come back as confirmed.</p>
+                    <p>Pending items stay pending when the file recorded them. A pending item keeps its recurring rule link only if that rule is still in your account.</p>
                     <p>Your existing recurring rules and paycheck plans are kept, but the recurring rules lose their category links.</p>
+                  </div>
+                )}
+                {safety?.status === 'error' && (
+                  <div className="mt-3 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg flex items-start gap-2">
+                    <AlertTriangle size={14} className="text-red-500 mt-0.5 shrink-0" />
+                    <div className="min-w-0 text-sm text-red-700 dark:text-red-300 break-words space-y-1">
+                      <p>Could not read your current data for the safety copy: {safety.error}</p>
+                      <p className="font-medium">The restore cannot start without a safety copy. Nothing was changed.</p>
+                      <button
+                        onClick={prepareSafetyCopy}
+                        className="mt-1 px-3 py-1.5 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors"
+                      >
+                        Retry
+                      </button>
+                    </div>
                   </div>
                 )}
                 {restoreResult && (
@@ -892,11 +961,16 @@ export default function Settings() {
                 <div className="flex gap-2 mt-3">
                   <button
                     onClick={handleConfirmImport}
-                    // After a restore that may have run, the next step is a reload, not a retry.
-                    disabled={importing || (restoreResult && restoreResult.changed !== false)}
+                    // Enabled only once the safety copy is in hand. After a restore that
+                    // may have run, the next step is a reload, not a retry.
+                    disabled={
+                      importing || safety?.status !== 'ready' ||
+                      (restoreResult && restoreResult.changed !== false)
+                    }
                     className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
                   >
-                    {importing ? 'Importing…' : 'Confirm Import'}
+                    {importing ? 'Importing…'
+                      : safety?.status === 'preparing' ? 'Preparing safety copy…' : 'Confirm Import'}
                   </button>
                   <button
                     onClick={handleCancelImport}

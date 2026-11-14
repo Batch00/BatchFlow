@@ -9,6 +9,9 @@
 // Version 1 files (the old export built from app state) are still accepted:
 // convertV1ToV2 maps them onto this shape, with recurring_rules and
 // paycheck_plans set to null so the restore leaves the existing ones in place.
+// When recurring_rules is null, a transaction's recurring_rule_id points at a
+// rule that already exists in the account (and keeps its id), so it is checked
+// against existingRuleIds and passed through remapIds unchanged.
 
 export const BACKUP_FORMAT = 'batchflow-backup'
 export const BACKUP_VERSION = 2
@@ -142,12 +145,13 @@ function result(ok, errors, version, counts, pending = 0) {
   const shown = errors.length > MAX_ERRORS_SHOWN
     ? [...errors.slice(0, MAX_ERRORS_SHOWN), `...and ${errors.length - MAX_ERRORS_SHOWN} more problems.`]
     : errors
-  return { ok, errors: shown, version, counts, pending }
+  return { ok, errors: shown, version, counts, pending, droppedBudgetEntries: 0 }
 }
 
 // Checks a version 2 object. Collects every problem rather than stopping at the
-// first, so the person sees the whole picture.
-function validateV2(data) {
+// first, so the person sees the whole picture. existingRuleIds: ids of the
+// recurring rules already in the account, used only when the file has none.
+function validateV2(data, existingRuleIds = new Set()) {
   const errors = []
   if (data.format !== BACKUP_FORMAT) {
     errors.push(`The file's format is not "${BACKUP_FORMAT}".`)
@@ -222,7 +226,10 @@ function validateV2(data) {
       const ref = row[col]
       if (isBlank(ref)) continue
       if (target === 'recurring_rules' && !rulesIncluded) {
-        errors.push(`${where} refers to recurring rule "${ref}", but the file has no recurring rules.`)
+        // The account's existing rules are kept, so a link to one of them is valid.
+        if (!existingRuleIds.has(ref)) {
+          errors.push(`${where} refers to recurring rule "${ref}", which is not in the file or in your account.`)
+        }
       } else if (typeof ref !== 'string' || !ids[target].has(ref)) {
         errors.push(`${where} refers to ${LABELS[target].toLowerCase()} "${ref}", which is not in the file.`)
       }
@@ -371,20 +378,26 @@ function checkV1Shape(data) {
 }
 
 // data: a parsed backup file of any version. Returns
-// { ok, errors, version, counts, pending }. counts has one entry per table
-// (null for a table the file leaves out) and is what the restore should report
-// back. pending is the number of transactions that will be restored as pending.
-export function validateBackup(data) {
+// { ok, errors, version, counts, pending, droppedBudgetEntries }. counts has one
+// entry per table (null for a table the file leaves out) and is what the
+// restore should report back. pending is the number of transactions that will
+// be restored as pending. droppedBudgetEntries is the number of version 1
+// budget entries skipped because their category or subcategory is not in the
+// file (always 0 for version 2, which stays strict).
+// options.existingRuleIds: iterable of the account's current recurring rule ids.
+export function validateBackup(data, { existingRuleIds } = {}) {
   if (!isPlainObject(data)) {
     return result(false, ['The file is not a BatchFlow backup (expected a JSON object).'], null, null)
   }
+  const ruleIds = new Set(existingRuleIds ?? [])
   // Very early exports had no version field; their shape is version 1.
   const version = data.version === undefined ? 1 : data.version
-  if (version === 2) return validateV2(data)
+  if (version === 2) return validateV2(data, ruleIds)
   if (version === 1) {
     const shapeErrors = checkV1Shape(data)
     if (shapeErrors.length > 0) return result(false, shapeErrors, 1, null)
-    return { ...validateV2(convertV1ToV2(data)), version: 1 }
+    const { backup, droppedBudgetEntries } = convertV1ToV2(data, { existingRuleIds: ruleIds })
+    return { ...validateV2(backup, ruleIds), version: 1, droppedBudgetEntries }
   }
   return result(false, [`Unsupported backup version: ${JSON.stringify(data.version)}.`], null, null)
 }
@@ -394,10 +407,16 @@ export function validateBackup(data) {
 const defaultNewId = () => crypto.randomUUID()
 
 // Maps the version 1 shape (nested subcategories, camelCase transactions with a
-// splits array, the budgets map) to version 2. Version 1 never restored pending
-// state or rule links, so every transaction comes back confirmed and unlinked.
-// Split rows and budget plans had no ids in version 1, so they get new ones.
-export function convertV1ToV2(data, newId = defaultNewId) {
+// splits array, the budgets map) to version 2. Returns
+// { backup, droppedBudgetEntries }.
+// - isPending and scheduledDate are kept when the file has them.
+// - recurringRuleId is kept only when it is in existingRuleIds (the rules in the
+//   account now, which a version 1 restore keeps with their ids), else null.
+// - Budget entries whose category or subcategory is not in the file are
+//   dropped and counted: they can only be leftovers of a deleted category.
+// - Split rows and budget plans had no ids in version 1, so they get new ones.
+export function convertV1ToV2(data, { existingRuleIds, newId = defaultNewId } = {}) {
+  const ruleIds = new Set(existingRuleIds ?? [])
   const categories = []
   const subcategories = []
   ;(data.categories ?? []).forEach((c, i) => {
@@ -435,9 +454,9 @@ export function convertV1ToV2(data, newId = defaultNewId) {
       is_split: isSplit,
       category_id: isSplit ? null : (t.categoryId ?? null),
       subcategory_id: isSplit ? null : (t.subcategoryId || null),
-      recurring_rule_id: null,
-      is_pending: false,
-      scheduled_date: null,
+      recurring_rule_id: ruleIds.has(t.recurringRuleId) ? t.recurringRuleId : null,
+      is_pending: t.isPending === true,
+      scheduled_date: t.scheduledDate ?? null,
       created_at: null,
     })
     if (isSplit) {
@@ -453,21 +472,26 @@ export function convertV1ToV2(data, newId = defaultNewId) {
     }
   }
 
+  const categoryIds = new Set(categories.map(c => c.id))
+  const subcategoryIds = new Set(subcategories.map(s => s.id))
   const budget_plans = []
+  let droppedBudgetEntries = 0
   for (const [monthKey, month] of Object.entries(data.budgets ?? {})) {
     for (const [catId, amount] of Object.entries(month?.planned ?? {})) {
+      if (!categoryIds.has(catId)) { droppedBudgetEntries++; continue }
       budget_plans.push({
         id: newId(), month_key: monthKey, category_id: catId, subcategory_id: null, planned_amount: amount,
       })
     }
     for (const [subId, amount] of Object.entries(month?.subcategoryPlanned ?? {})) {
+      if (!subcategoryIds.has(subId)) { droppedBudgetEntries++; continue }
       budget_plans.push({
         id: newId(), month_key: monthKey, category_id: null, subcategory_id: subId, planned_amount: amount,
       })
     }
   }
 
-  return {
+  const backup = {
     format: BACKUP_FORMAT,
     version: BACKUP_VERSION,
     exportedAt: data.exportedAt ?? null,
@@ -479,6 +503,7 @@ export function convertV1ToV2(data, newId = defaultNewId) {
     budget_plans,
     paycheck_plans: null,
   }
+  return { backup, droppedBudgetEntries }
 }
 
 // ── Remap ─────────────────────────────────────────────────────────────────────
@@ -486,7 +511,9 @@ export function convertV1ToV2(data, newId = defaultNewId) {
 // Returns a copy of a validated version 2 object in which every row id is new
 // and every reference is rewritten through the same map. Restoring with fresh
 // ids means a backup never collides with rows owned by another account, so it
-// can be restored into any account. Throws if a reference has no target, which
+// can be restored into any account. A reference into a table the file leaves
+// out (null) points at a row the restore keeps in the account, so it is passed
+// through unchanged. Throws if any other reference has no target, which
 // validateBackup rules out beforehand.
 export function remapIds(v2, newId = defaultNewId) {
   const maps = {}
@@ -509,6 +536,7 @@ export function remapIds(v2, newId = defaultNewId) {
       for (const [col, target] of Object.entries(REFERENCES[table])) {
         const ref = row[col]
         if (isBlank(ref)) continue
+        if (!Array.isArray(v2[target])) continue
         if (!maps[target].has(ref)) {
           throw new Error(`remapIds: ${table}.${col} refers to missing ${target} id ${ref}`)
         }
