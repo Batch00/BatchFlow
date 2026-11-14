@@ -1118,25 +1118,6 @@ export function AppProvider({ children }) {
     return { error: null }
   }, [user])
 
-  // ── Clear all user data (for account deletion) ────────────────────────────────
-
-  const clearAllData = useCallback(async () => {
-    if (blocked()) return
-    // Deleting categories cascades to subcategories and budget_plans.
-    // Deleting transactions cascades to transaction_splits.
-    await Promise.all([
-      supabase.from('transactions').delete().eq('user_id', user.id),
-      supabase.from('categories').delete().eq('user_id', user.id),
-      supabase.from('recurring_rules').delete().eq('user_id', user.id),
-      supabase.from('paycheck_plans').delete().eq('user_id', user.id),
-    ])
-    setCategories([])
-    setTransactions([])
-    setBudgets({})
-    setRecurringRules([])
-    setPaycheckPlans([])
-  }, [user])
-
   // ── Import all data (for Settings restore) ────────────────────────────────────
 
   // ── Read backup (version 2, raw database rows) ───────────────────────────────
@@ -1269,7 +1250,6 @@ export function AppProvider({ children }) {
     readBackup,
     importAllData,
     clearMonthData,
-    clearAllData,
   }), [
     currentMonth, setCurrentMonth,
     categories, transactions, currentMonthTransactions,
@@ -1284,7 +1264,7 @@ export function AppProvider({ children }) {
     resetMonthBudget, setSubcategoryBudgetAmount, copyBudget, moveSubcategory,
     addCategory, updateCategory, deleteCategory,
     addSubcategory, updateSubcategory, deleteSubcategory,
-    moveCategory, readBackup, importAllData, clearMonthData, clearAllData,
+    moveCategory, readBackup, importAllData, clearMonthData,
   ])
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>
